@@ -126,14 +126,17 @@ Always call this before deploying a position to get the freshest price.`,
       name: "deploy_position",
       description: `Open a new DLMM liquidity position.
 
-You have autonomy to choose strategy and range based on pool metrics.
+PRIORITY ORDER for strategy and bins:
+1. User explicitly specifies → always follow exactly (user override is absolute)
+2. No user spec → use active strategy's lp_strategy and choose bins based on volatility
 
 HARD RULES:
-- Use the lp_strategy from the active strategy (bid_ask or spot). Never use 'curve'.
+- Never use 'curve'.
 - Bin Step: Only deploy in pools with bin_step between 80 and 125.
 
-Guidelines:
-- Range: 1–1400 total bins in a single position. The SDK handles wide ranges internally in one transaction.
+Guidelines (only when user hasn't specified):
+- Strategy: use the active strategy's lp_strategy field (bid_ask or spot)
+- Bins: choose 35–69 for standard volatility; up to 350 for wide-range strategies. Max 1400 total.
 - Deposit: Can be single-sided (SOL only or Base only) or dual-sided.
 
 WARNING: This executes a real on-chain transaction. Check DRY_RUN mode.`,
@@ -159,11 +162,11 @@ WARNING: This executes a real on-chain transaction. Check DRY_RUN mode.`,
           strategy: {
             type: "string",
             enum: ["bid_ask", "spot"],
-            description: "DLMM strategy type. Use bid_ask (default) or spot. Match the active strategy's lp_strategy field."
+            description: "DLMM strategy type. If user specifies, use exactly what they said. Otherwise use the active strategy's lp_strategy field."
           },
           bins_below: {
             type: "number",
-            description: "Number of bins below active bin. Max 1400 total (bins_below + bins_above). Low volatility → 35–69. Wide range strategies → 100–350."
+            description: "Number of bins below active bin. If the user specifies a value, use it exactly. Otherwise choose based on volatility: 35–69 standard, 100–350 for wide-range strategies. Max 1400 total."
           },
           bins_above: {
             type: "number",
