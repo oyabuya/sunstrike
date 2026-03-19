@@ -151,10 +151,11 @@ HARD CLOSE RULES — apply in order, first match wins:
 5. oor_minutes >= ${config.management.outOfRangeWaitMinutes} → CLOSE (OOR timeout)
 6. fee_active_tvl_ratio < ${config.screening.minFeeActiveTvlRatio} AND volume < $${config.screening.minVolume} → CLOSE (yield dead)
 
-STEPS:
-1. Apply rules to each position above. No fetching needed — data is pre-loaded.
-2. For any CLOSE: call close_position, then swap base tokens to SOL.
-3. After all closes: if no positions remain, update_config managementIntervalMin=10.
+INSTRUCTIONS:
+All data is pre-loaded above — do NOT call get_my_positions or get_position_pnl.
+Apply the rules to each position and write your report immediately.
+Only call tools if a position needs to be CLOSED (close_position, then swap_token).
+If all positions STAY, just write the report with no tool calls.
 
 REPORT FORMAT (one per position):
 **[PAIR]** | Age: [X]m | Fees: $[X] | PnL: [X]%
