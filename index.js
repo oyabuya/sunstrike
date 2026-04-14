@@ -560,20 +560,25 @@ STEPS:
 1. Pick the best candidate based on narrative quality, smart wallets, pool metrics, AND vol_trend.
    - Prefer pools with vol_trend=up or flat over vol_trend=down.
    - A pool with vol_trend=down and trend_pct < -50% is a red flag (momentum over).
-2. Call deploy_position (active_bin is pre-fetched above — no need to call get_active_bin).
-   bins_below = round(35 + (volatility/5)*34) clamped to [35,69].
-   strategy selection (use pool's volatility score):
-   - volatility < 2  → strategy="spot"  (uniform distribution, lower OOR risk for automated LP)
-   - volatility 2–3  → strategy="spot"  (moderate range, stays in range longer)
-   - volatility > 3  → strategy="bid_ask" (captures wider swings, higher fee potential)
+2. Call deploy_position with these EXACT parameters:
+   - pool_address: <pool address>
+   - amount_y: ${deployAmount}  ← REQUIRED, always pass this exact value
+   - amount_x: 0
+   - strategy: (select by pool volatility score)
+       volatility < 2  → "spot"
+       volatility 2–3  → "spot"
+       volatility > 3  → "bid_ask"
+   - bins_below: round(35 + (volatility/5)*34) clamped to [35,69]
+   - bins_above: 0
+   - active_bin: (use pre-fetched value above)
 3. Report in this exact format (no tables, no extra sections):
    🚀 DEPLOYED
 
    <pool name>
    <pool address>
 
-   ◎ <deploy amount> SOL | <strategy> | bin <active_bin>
-   Range: <minPrice> → <maxPrice>
+   ◎ ${deployAmount} SOL | <strategy> | bin <active_bin>
+   Range: bin <active_bin - bins_below> → <active_bin>
    Downside buffer: <negative %>
 
    MARKET
