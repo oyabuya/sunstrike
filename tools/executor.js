@@ -405,6 +405,17 @@ async function runSafetyChecks(name, args) {
         }
       }
 
+      // Warn (but don't block) if pool has 0 open positions — binArrays may be uninitialized.
+      // The definitive check is done on-chain inside deployPosition() in dlmm.js.
+      try {
+        const poolData = await getPoolDetail({ pool_address: args.pool_address });
+        if (poolData?.open_positions != null && poolData.open_positions === 0) {
+          log("executor", `⚠️  Pool ${args.pool_address.slice(0, 8)} has 0 open positions — on-chain binArray check will run before deploy.`);
+        }
+      } catch {
+        // non-blocking
+      }
+
       // Check amount limits
       const amountY = args.amount_y ?? args.amount_sol ?? 0;
       if (amountY <= 0) {
@@ -429,15 +440,23 @@ async function runSafetyChecks(name, args) {
       }
 
       // Check SOL balance
+      // Includes binArrayRentBuffer: Meteora charges ~0.075 SOL non-refundable rent per binArray
+      // account when a position uses bin ranges that have never been created before.
+      // A typical position spans 1-2 binArrays → buffer = 0.15 SOL to avoid unexpected failures.
       if (process.env.DRY_RUN !== "true") {
         const balance = await getWalletBalances();
         const gasReserve = config.management.gasReserve;
-        const minRequired = amountY + gasReserve;
+        const binArrayBuffer = config.management.binArrayRentBuffer ?? 0.15;
+        const minRequired = amountY + gasReserve + binArrayBuffer;
         if (balance.sol < minRequired) {
           return {
             pass: false,
-            reason: `Insufficient SOL: have ${balance.sol} SOL, need ${minRequired} SOL (${amountY} deploy + ${gasReserve} gas reserve).`,
+            reason: `Insufficient SOL: have ${balance.sol.toFixed(3)} SOL, need ${minRequired.toFixed(3)} SOL (${amountY} deploy + ${gasReserve} gas + ${binArrayBuffer} binArray rent buffer). Note: binArray rent is non-refundable if this pool's bins have never been initialized.`,
           };
+        }
+        // Warn but don't block if balance is thin after binArray buffer
+        if (balance.sol < minRequired + 0.05) {
+          log("executor", `⚠️  Low SOL buffer after deploy: ${(balance.sol - minRequired).toFixed(3)} SOL remaining. If pool bins are uninitialized, transaction may fail.`);
         }
       }
 

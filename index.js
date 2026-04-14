@@ -5,7 +5,7 @@ import { agentLoop } from "./agent.js";
 import { log } from "./logger.js";
 import { getMyPositions, closePosition, getActiveBin } from "./tools/dlmm.js";
 import { getWalletBalances } from "./tools/wallet.js";
-import { getTopCandidates } from "./tools/screening.js";
+import { getTopCandidates, getVolumeTrend } from "./tools/screening.js";
 import { config, reloadScreeningThresholds, computeDeployAmount } from "./config.js";
 import { evolveThresholds, getPerformanceSummary } from "./lessons.js";
 import { registerCronRestarter } from "./tools/executor.js";
@@ -57,6 +57,7 @@ function buildPrompt() {
 let _cronTasks = [];
 let _managementBusy = false; // prevents overlapping management cycles
 let _screeningBusy = false;  // prevents overlapping screening cycles
+let _healthCheckBusy = false; // prevents overlapping health check cycles
 let _screeningLastTriggered = 0; // epoch ms — prevents management from spamming screening
 let _pollTriggeredAt = 0; // epoch ms — cooldown for poller-triggered management
 const _peakConfirmTimers = new Map();
@@ -341,7 +342,7 @@ RULES:
 
 Execute the required actions. Do NOT re-evaluate CLOSE/CLAIM — rules already applied. Just execute.
 After executing, write a brief one-line result per position.
-      `, config.llm.maxSteps, [], "MANAGER", config.llm.managementModel, 2048, {
+      `, config.llm.maxSteps, [], "MANAGER", config.llm.managementModel, config.llm.maxTokens, {
         onToolStart: async ({ name }) => { await liveMessage?.toolStart(name); },
         onToolFinish: async ({ name, result, success }) => { await liveMessage?.toolFinish(name, result, success); },
       });
@@ -399,11 +400,12 @@ export async function runScreeningCycle({ silent = false } = {}) {
       _screeningBusy = false;
       return screenReport;
     }
-    const minRequired = config.management.deployAmountSol + config.management.gasReserve;
+    const binArrayBuffer = config.management.binArrayRentBuffer ?? 0.15;
+    const minRequired = config.management.deployAmountSol + config.management.gasReserve + binArrayBuffer;
     const isDryRun = process.env.DRY_RUN === "true";
     if (!isDryRun && preBalance.sol < minRequired) {
-      log("cron", `Screening skipped — insufficient SOL (${preBalance.sol.toFixed(3)} < ${minRequired} needed for deploy + gas)`);
-      screenReport = `Screening skipped — insufficient SOL (${preBalance.sol.toFixed(3)} < ${minRequired} needed for deploy + gas).`;
+      log("cron", `Screening skipped — insufficient SOL (${preBalance.sol.toFixed(3)} < ${minRequired.toFixed(3)} needed for deploy + gas + binArray rent buffer)`);
+      screenReport = `Screening skipped — insufficient SOL (${preBalance.sol.toFixed(3)} < ${minRequired.toFixed(3)} needed for deploy + gas + binArray rent buffer).`;
       _screeningBusy = false;
       return screenReport;
     }
@@ -428,7 +430,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
     const activeStrategy = getActiveStrategy();
     const strategyBlock = activeStrategy
       ? `ACTIVE STRATEGY: ${activeStrategy.name} — LP: ${activeStrategy.lp_strategy} | bins_above: ${activeStrategy.range?.bins_above ?? 0} (FIXED — never change) | deposit: ${activeStrategy.entry?.single_side === "sol" ? "SOL only (amount_y, amount_x=0)" : "dual-sided"} | best for: ${activeStrategy.best_for}`
-      : `No active strategy — use default bid_ask, bins_above: 0, SOL only.`;
+      : `No active strategy — select strategy per STEPS below based on pool volatility. bins_above: 0, SOL only (amount_y, amount_x=0).`;
 
     // Fetch top candidates, then recon each sequentially with a small delay to avoid 429s
     const topCandidates = await getTopCandidates({ limit: 10 }).catch(() => null);
@@ -491,10 +493,11 @@ export async function runScreeningCycle({ silent = false } = {}) {
       return screenReport;
     }
 
-    // Pre-fetch active_bin for all passing candidates in parallel
-    const activeBinResults = await Promise.allSettled(
-      passing.map(({ pool }) => getActiveBin({ pool_address: pool.pool }))
-    );
+    // Pre-fetch active_bin + volume trends for all passing candidates in parallel
+    const [activeBinResults, volumeTrendResults] = await Promise.all([
+      Promise.allSettled(passing.map(({ pool }) => getActiveBin({ pool_address: pool.pool }))),
+      Promise.allSettled(passing.map(({ pool }) => getVolumeTrend(pool.pool))),
+    ]);
 
     // Build compact candidate blocks
     const candidateBlocks = passing.map(({ pool, sw, n, ti, mem }, i) => {
@@ -505,6 +508,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
       const priceChange = ti?.stats_1h?.price_change;
       const netBuyers = ti?.stats_1h?.net_buyers;
       const activeBin = activeBinResults[i]?.status === "fulfilled" ? activeBinResults[i].value?.binId : null;
+      const volTrend = volumeTrendResults[i]?.status === "fulfilled" ? volumeTrendResults[i].value : null;
 
       // OKX signals
       const okxParts = [
@@ -536,6 +540,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
         `  smart_wallets: ${sw?.in_pool?.length ?? 0} present${sw?.in_pool?.length ? ` → CONFIDENCE BOOST (${sw.in_pool.map(w => w.name).join(", ")})` : ""}`,
         activeBin != null ? `  active_bin: ${activeBin}` : null,
         priceChange != null ? `  1h: price${priceChange >= 0 ? "+" : ""}${priceChange}%, net_buyers=${netBuyers ?? "?"}` : null,
+        volTrend ? `  vol_trend: ${volTrend.direction} (${volTrend.trend_pct != null ? (volTrend.trend_pct >= 0 ? "+" : "") + volTrend.trend_pct + "%" : "n/a"} vs prev 6h), avg_6h=$${volTrend.last6h_avg_vol}` : null,
         n?.narrative ? `  narrative_untrusted: ${sanitizeUntrustedPromptText(n.narrative, 500)}` : `  narrative_untrusted: none`,
         mem ? `  memory_untrusted: ${sanitizeUntrustedPromptText(mem, 500)}` : null,
       ].filter(Boolean).join("\n");
@@ -552,9 +557,15 @@ PRE-LOADED CANDIDATES (${passing.length} pools):
 ${candidateBlocks.join("\n\n")}
 
 STEPS:
-1. Pick the best candidate based on narrative quality, smart wallets, and pool metrics.
+1. Pick the best candidate based on narrative quality, smart wallets, pool metrics, AND vol_trend.
+   - Prefer pools with vol_trend=up or flat over vol_trend=down.
+   - A pool with vol_trend=down and trend_pct < -50% is a red flag (momentum over).
 2. Call deploy_position (active_bin is pre-fetched above — no need to call get_active_bin).
-   bins_below = round(35 + (volatility/5)*55) clamped to [35,90].
+   bins_below = round(35 + (volatility/5)*34) clamped to [35,69].
+   strategy selection (use pool's volatility score):
+   - volatility < 2  → strategy="spot"  (uniform distribution, lower OOR risk for automated LP)
+   - volatility 2–3  → strategy="spot"  (moderate range, stays in range longer)
+   - volatility > 3  → strategy="bid_ask" (captures wider swings, higher fee potential)
 3. Report in this exact format (no tables, no extra sections):
    🚀 DEPLOYED
 
@@ -603,7 +614,7 @@ STEPS:
 IMPORTANT:
 - Never write "unknown" for OKX. Use real values, omit missing fields, or write exactly "OKX: unavailable".
 - Keep the whole report compact and highly scannable for Telegram.
-      `, config.llm.maxSteps, [], "SCREENER", config.llm.screeningModel, 2048, {
+      `, config.llm.maxSteps, [], "SCREENER", config.llm.screeningModel, config.llm.maxTokens, {
         onToolStart: async ({ name }) => { await liveMessage?.toolStart(name); },
         onToolFinish: async ({ name, result, success }) => { await liveMessage?.toolFinish(name, result, success); },
       });
@@ -635,19 +646,19 @@ export function startCronJobs() {
   const screenTask = cron.schedule(`*/${Math.max(1, config.schedule.screeningIntervalMin)} * * * *`, runScreeningCycle);
 
   const healthTask = cron.schedule(`0 * * * *`, async () => {
-    if (_managementBusy) return;
-    _managementBusy = true;
+    if (_healthCheckBusy) return;
+    _healthCheckBusy = true;
     log("cron", "Starting health check");
     try {
       await agentLoop(`
 HEALTH CHECK
 
 Summarize the current portfolio health, total fees earned, and performance of all open positions. Recommend any high-level adjustments if needed.
-      `, config.llm.maxSteps, [], "MANAGER");
+      `, config.llm.maxSteps, [], "MANAGER", config.llm.managementModel);
     } catch (error) {
       log("cron_error", `Health check failed: ${error.message}`);
     } finally {
-      _managementBusy = false;
+      _healthCheckBusy = false;
     }
   });
 

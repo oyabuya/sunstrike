@@ -128,16 +128,21 @@ Only call this if you need the current price to calculate a specific bin range (
 
 PRIORITY ORDER for strategy and bins:
 1. User explicitly specifies → always follow exactly (user override is absolute)
-2. No user spec → use active strategy's lp_strategy and choose bins based on volatility
+2. Active strategy set → use its lp_strategy and bins
+3. No active strategy → select by pool volatility score (from screening prompt instructions)
 
 HARD RULES:
 - Never use 'curve'.
 - Bin Step: Only deploy in pools with bin_step between 80 and 125.
 
+Strategy selection by volatility (when no active strategy):
+- volatility < 2  → "spot"    (lower OOR risk for automated agent)
+- volatility 2–3  → "spot"
+- volatility > 3  → "bid_ask" (captures wider price swings)
+
 Guidelines (only when user hasn't specified):
-- Strategy: use the active strategy's lp_strategy field (bid_ask or spot)
 - Bins: choose 35–69 for standard volatility; up to 350 for wide-range strategies. Max 1400 total.
-- Deposit: Can be single-sided (SOL only or Base only) or dual-sided.
+- Deposit: single-sided SOL only (amount_y, amount_x=0) unless user specifies otherwise.
 
 WARNING: This executes a real on-chain transaction. Check DRY_RUN mode.`,
       parameters: {

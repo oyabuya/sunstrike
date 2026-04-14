@@ -4,9 +4,56 @@ import { isDevBlocked, getBlockedDevs } from "../dev-blocklist.js";
 import { log } from "../logger.js";
 import { isBaseMintOnCooldown, isPoolOnCooldown } from "../pool-memory.js";
 
+const FETCH_TIMEOUT_MS = 15_000;
+async function ftch(url, opts = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try { return await fetch(url, { ...opts, signal: controller.signal }); }
+  finally { clearTimeout(timer); }
+}
+
 const DATAPI_JUP = "https://datapi.jup.ag/v1";
 
 const POOL_DISCOVERY_BASE = "https://pool-discovery-api.datapi.meteora.ag";
+const DLMM_ANALYTICS_BASE = "https://dlmm.datapi.meteora.ag";
+
+/**
+ * Fetch hourly volume for the last 12h and return a trend signal.
+ * trend_pct > 0 = volume growing, < 0 = shrinking.
+ * Returns null if data is insufficient (pool too new / all zeros).
+ */
+export async function getVolumeTrend(poolAddress) {
+  try {
+    const url = `${DLMM_ANALYTICS_BASE}/pools/${poolAddress}/volume/history?timeframe=1h&limit=12`;
+    const res = await ftch(url);
+    if (!res.ok) return null;
+    const json = await res.json();
+    const buckets = json?.data ?? [];
+    if (buckets.length < 4) return null;
+
+    const half = Math.floor(buckets.length / 2);
+    const older = buckets.slice(0, half).reduce((s, b) => s + (b.volume || 0), 0);
+    const recent = buckets.slice(half).reduce((s, b) => s + (b.volume || 0), 0);
+
+    if (older < 100 && recent < 100) return null; // no meaningful data
+
+    const trend_pct = older > 0
+      ? parseFloat(((recent - older) / older * 100).toFixed(1))
+      : null;
+
+    const last6h_avg = parseFloat((recent / half).toFixed(0));
+    return {
+      trend_pct,
+      last6h_avg_vol: last6h_avg,
+      direction: trend_pct == null ? "unknown"
+        : trend_pct > 20  ? "up"
+        : trend_pct < -30 ? "down"
+        : "flat",
+    };
+  } catch {
+    return null;
+  }
+}
 
 
 
@@ -44,7 +91,7 @@ export async function discoverPools({
     `&timeframe=${s.timeframe}` +
     `&category=${s.category}`;
 
-  const res = await fetch(url);
+  const res = await ftch(url);
 
   if (!res.ok) {
     throw new Error(`Pool Discovery API error: ${res.status} ${res.statusText}`);
@@ -78,7 +125,7 @@ export async function discoverPools({
     if (missingDev.length > 0) {
       const devResults = await Promise.allSettled(
         missingDev.map((p) =>
-          fetch(`${DATAPI_JUP}/assets/search?query=${p.base.mint}`)
+          ftch(`${DATAPI_JUP}/assets/search?query=${p.base.mint}`)
             .then((r) => r.ok ? r.json() : null)
             .then((d) => {
               const t = Array.isArray(d) ? d[0] : d;
@@ -276,7 +323,7 @@ export async function getPoolDetail({ pool_address, timeframe = "5m" }) {
     `&filter_by=${encodeURIComponent(`pool_address=${pool_address}`)}` +
     `&timeframe=${timeframe}`;
 
-  const res = await fetch(url);
+  const res = await ftch(url);
 
   if (!res.ok) {
     throw new Error(`Pool detail API error: ${res.status} ${res.statusText}`);
@@ -289,7 +336,7 @@ export async function getPoolDetail({ pool_address, timeframe = "5m" }) {
     throw new Error(`Pool ${pool_address} not found`);
   }
 
-  return pool;
+  return condensePool(pool);
 }
 
 /**

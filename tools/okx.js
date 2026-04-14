@@ -42,11 +42,19 @@ async function okxRequest(method, path, body = null) {
     ? { ...buildAuthHeaders(method, path, bodyText), ...(body != null ? { "Content-Type": "application/json" } : {}) }
     : { ...PUBLIC_HEADERS, ...(body != null ? { "Content-Type": "application/json" } : {}) };
 
-  const res = await fetch(`${BASE}${path}`, {
-    method,
-    headers,
-    ...(body != null ? { body: bodyText } : {}),
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15_000);
+  let res;
+  try {
+    res = await fetch(`${BASE}${path}`, {
+      method,
+      headers,
+      signal: controller.signal,
+      ...(body != null ? { body: bodyText } : {}),
+    });
+  } finally {
+    clearTimeout(timer);
+  }
   if (!res.ok) throw new Error(`OKX API ${res.status}: ${path}`);
   const json = await res.json();
   if (json.code !== "0" && json.code !== 0) throw new Error(`OKX error ${json.code}: ${json.msg || json.message || "unknown"}`);
@@ -63,6 +71,22 @@ async function okxPost(path, body) {
 
 const pct = (v) => v != null && v !== "" ? parseFloat(v) : null;
 const int = (v) => v != null && v !== "" ? parseInt(v, 10) : null;
+
+// ─── In-memory TTL cache (5 min) ────────────────────────────────
+const _cache = new Map(); // key → { value, expiresAt }
+const CACHE_TTL_MS = 5 * 60 * 1000;
+
+function cacheGet(key) {
+  const entry = _cache.get(key);
+  if (!entry) return undefined;
+  if (Date.now() > entry.expiresAt) { _cache.delete(key); return undefined; }
+  return entry.value;
+}
+
+function cacheSet(key, value) {
+  _cache.set(key, { value, expiresAt: Date.now() + CACHE_TTL_MS });
+  return value;
+}
 
 function isAffirmative(label) {
   return typeof label === "string" && label.trim().toLowerCase() === "yes";
@@ -108,13 +132,16 @@ export async function getRiskFlags(tokenAddress, chainId = CHAIN_SOLANA) {
  * Advanced token info — risk level, bundle/sniper/suspicious %, dev rug history, token tags.
  */
 export async function getAdvancedInfo(tokenAddress, chainIndex = CHAIN_SOLANA) {
+  const cacheKey = `adv:${chainIndex}:${tokenAddress}`;
+  const cached = cacheGet(cacheKey);
+  if (cached !== undefined) return cached;
   const path = `/api/v6/dex/market/token/advanced-info?chainIndex=${chainIndex}&tokenContractAddress=${tokenAddress}`;
   const data = await okxGet(path);
   const d = Array.isArray(data) ? data[0] : data;
   if (!d) return null;
 
   const tags = d.tokenTags || [];
-  return {
+  const result = {
     risk_level:       int(d.riskControlLevel),
     bundle_pct:       pct(d.bundleHoldingPercent),
     sniper_pct:       pct(d.sniperHoldingPercent),
@@ -135,6 +162,7 @@ export async function getAdvancedInfo(tokenAddress, chainIndex = CHAIN_SOLANA) {
     dex_boost:            tags.includes("dexBoost"),
     dex_screener_paid:    tags.includes("dexScreenerPaid") || tags.includes("dsPaid"),
   };
+  return cacheSet(cacheKey, result);
 }
 
 /**
@@ -142,13 +170,16 @@ export async function getAdvancedInfo(tokenAddress, chainIndex = CHAIN_SOLANA) {
  * Condenses to top N clusters for LLM consumption.
  */
 export async function getClusterList(tokenAddress, chainIndex = CHAIN_SOLANA, limit = 5) {
+  const cacheKey = `cls:${chainIndex}:${tokenAddress}:${limit}`;
+  const cached = cacheGet(cacheKey);
+  if (cached !== undefined) return cached;
   const path = `/api/v6/dex/market/token/cluster/list?chainIndex=${chainIndex}&tokenContractAddress=${tokenAddress}`;
   const data = await okxGet(path);
   // Public endpoint returns data.clusterList (not data[0].clustList)
   const raw = data?.clusterList ?? (Array.isArray(data) ? data[0]?.clustList ?? [] : []);
-  if (!raw.length) return [];
+  if (!raw.length) return cacheSet(cacheKey, []);
 
-  return raw.slice(0, limit).map((c) => {
+  const result = raw.slice(0, limit).map((c) => {
     const hasKol = (c.clusterAddressList || []).some((a) => a.isKol);
     return {
       holding_pct:   pct(c.holdingPercent),
@@ -162,6 +193,7 @@ export async function getClusterList(tokenAddress, chainIndex = CHAIN_SOLANA, li
       address_count: (c.clusterAddressList || []).length,
     };
   });
+  return cacheSet(cacheKey, result);
 }
 
 /**
@@ -169,6 +201,9 @@ export async function getClusterList(tokenAddress, chainIndex = CHAIN_SOLANA, li
  * Also returns holders, marketCap, liquidity from this endpoint.
  */
 export async function getPriceInfo(tokenAddress, chainIndex = CHAIN_SOLANA) {
+  const cacheKey = `price:${chainIndex}:${tokenAddress}`;
+  const cached = cacheGet(cacheKey);
+  if (cached !== undefined) return cached;
   const data = await okxPost("/api/v6/dex/market/price-info", [
     { chainIndex, tokenContractAddress: tokenAddress },
   ]);
@@ -176,7 +211,7 @@ export async function getPriceInfo(tokenAddress, chainIndex = CHAIN_SOLANA) {
   if (!d) return null;
   const price    = parseFloat(d.price    || 0);
   const maxPrice = parseFloat(d.maxPrice || 0);
-  return {
+  const result = {
     price,
     ath:              maxPrice,
     atl:              parseFloat(d.minPrice || 0),
@@ -189,6 +224,7 @@ export async function getPriceInfo(tokenAddress, chainIndex = CHAIN_SOLANA) {
     market_cap:       pct(d.marketCap),
     liquidity:        pct(d.liquidity),
   };
+  return cacheSet(cacheKey, result);
 }
 
 /**

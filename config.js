@@ -43,9 +43,10 @@ export const config = {
     maxBotHoldersPct:  u.maxBotHoldersPct  ?? 30,  // max bot holder addresses % (Jupiter audit)
     maxTop10Pct:       u.maxTop10Pct       ?? 60,  // max top 10 holders concentration
     blockedLaunchpads:  u.blockedLaunchpads  ?? [],  // e.g. ["letsbonk.fun", "pump.fun"]
-    minTokenAgeHours:   u.minTokenAgeHours   ?? null, // null = no minimum
-    maxTokenAgeHours:   u.maxTokenAgeHours   ?? null, // null = no maximum
-    athFilterPct:       u.athFilterPct       ?? null, // e.g. -20 = only deploy if price is >= 20% below ATH
+    minTokenAgeHours:   u.minTokenAgeHours   ?? 2,    // skip tokens < 2h old (demand belum terbukti)
+    maxTokenAgeHours:   u.maxTokenAgeHours   ?? 72,   // skip tokens > 72h (momentum mungkin sudah lewat)
+    athFilterPct:       u.athFilterPct       ?? -20,  // skip jika harga > 80% dari ATH (overheated)
+    maxVolatility:      u.maxVolatility      ?? 5.0,  // max pool volatility score (evolved by lessons.js)
   },
 
   // ─── Position Management ────────────────
@@ -64,6 +65,10 @@ export const config = {
     minSolToOpen:          u.minSolToOpen          ?? 0.55,
     deployAmountSol:       u.deployAmountSol       ?? 0.5,
     gasReserve:            u.gasReserve            ?? 0.2,
+    // Non-refundable rent paid when a position uses bin ranges never created before.
+    // Meteora charges ~0.075 SOL per binArray account. A typical position spans 1-2 binArrays.
+    // This buffer is added on top of gasReserve in all SOL sufficiency checks.
+    binArrayRentBuffer:    u.binArrayRentBuffer    ?? 0.15,
     positionSizePct:       u.positionSizePct       ?? 0.35,
     // Trailing take-profit
     trailingTakeProfit:    u.trailingTakeProfit    ?? true,
@@ -97,6 +102,17 @@ export const config = {
     generalModel:    u.generalModel    ?? process.env.LLM_MODEL ?? "openrouter/healer-alpha",
   },
 
+  // ─── Darwin Signal Weights ─────────────────────────────────────
+  darwin: {
+    enabled:        u.darwinEnabled        ?? true,
+    windowDays:     u.darwinWindowDays     ?? 60,
+    minSamples:     u.darwinMinSamples     ?? 10,
+    boostFactor:    u.darwinBoostFactor    ?? 1.05,
+    decayFactor:    u.darwinDecayFactor    ?? 0.95,
+    weightFloor:    u.darwinWeightFloor    ?? 0.3,
+    weightCeiling:  u.darwinWeightCeiling  ?? 2.5,
+  },
+
   // ─── Common Token Mints ────────────────
   tokens: {
     SOL:  "So11111111111111111111111111111111111111112",
@@ -118,7 +134,8 @@ export const config = {
  *   4.0 SOL wallet → 1.33 SOL deploy
  */
 export function computeDeployAmount(walletSol) {
-  const reserve  = config.management.gasReserve      ?? 0.2;
+  const reserve  = (config.management.gasReserve ?? 0.2)
+                 + (config.management.binArrayRentBuffer ?? 0.15);
   const pct      = config.management.positionSizePct ?? 0.35;
   const floor    = config.management.deployAmountSol;
   const ceil     = config.risk.maxDeployAmount;
@@ -153,6 +170,7 @@ export function reloadScreeningThresholds() {
     if (fresh.minTokenAgeHours  !== undefined) s.minTokenAgeHours = fresh.minTokenAgeHours;
     if (fresh.maxTokenAgeHours  !== undefined) s.maxTokenAgeHours = fresh.maxTokenAgeHours;
     if (fresh.athFilterPct      !== undefined) s.athFilterPct     = fresh.athFilterPct;
+    if (fresh.maxVolatility      != null) s.maxVolatility    = fresh.maxVolatility;
     if (fresh.maxBundlePct      != null) s.maxBundlePct     = fresh.maxBundlePct;
     if (fresh.maxBotHoldersPct  != null) s.maxBotHoldersPct = fresh.maxBotHoldersPct;
   } catch { /* ignore */ }

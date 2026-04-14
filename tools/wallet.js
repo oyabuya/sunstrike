@@ -12,6 +12,14 @@ import { config } from "../config.js";
 let _connection = null;
 let _wallet = null;
 
+const FETCH_TIMEOUT_MS = 15_000;
+async function ftch(url, opts = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try { return await fetch(url, { ...opts, signal: controller.signal }); }
+  finally { clearTimeout(timer); }
+}
+
 function getConnection() {
   if (!_connection) _connection = new Connection(process.env.RPC_URL, "confirmed");
   return _connection;
@@ -50,7 +58,7 @@ export async function getWalletBalances() {
 
   try {
     const url = `https://api.helius.xyz/v1/wallet/${walletAddress}/balances?api-key=${HELIUS_KEY}`;
-    const res = await fetch(url);
+    const res = await ftch(url);
     
     if (!res.ok) {
       throw new Error(`Helius API error: ${res.status} ${res.statusText}`);

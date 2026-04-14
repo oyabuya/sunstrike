@@ -144,6 +144,22 @@ export async function deployPosition({
     log("deploy", `Base mint ${baseMint.slice(0, 8)} is on cooldown — skipping deploy for pool ${pool_address.slice(0, 8)}`);
     return { success: false, error: "Token on cooldown — recently closed out-of-range too many times. Try a different token." };
   }
+
+  // ── Launch Pool detection ────────────────────────────────────────
+  // Launch Pools charge 20% protocol fee (protocolShare=2000 bps) vs 5% for standard pools.
+  // LPs in Launch Pools only receive 80% of swap fees — a 15% yield reduction.
+  const protocolShare = pool.lbPair.parameters?.protocolShare ?? 500;
+  if (protocolShare >= 2000) {
+    log("deploy", `Blocked: ${pool_address.slice(0, 8)} is a Launch Pool (protocolShare=${protocolShare} bps = ${(protocolShare / 100).toFixed(0)}%). LPs only earn ${(100 - protocolShare / 100).toFixed(0)}% of fees.`);
+    return {
+      success: false,
+      error: `Deploy blocked: this is a DLMM Launch Pool with ${(protocolShare / 100).toFixed(0)}% protocol fee. LPs only earn ${(100 - protocolShare / 100).toFixed(0)}% of swap fees instead of the standard 95%. Choose a standard DLMM pool for better LP yield.`,
+    };
+  }
+  if (protocolShare > 500) {
+    log("deploy", `⚠️  Non-standard protocol fee: ${pool_address.slice(0, 8)} has protocolShare=${protocolShare} bps (${(protocolShare / 100).toFixed(1)}%). Standard is 5%.`);
+  }
+
   const activeBin = await pool.getActiveBin();
 
   // Range calculation
@@ -184,6 +200,50 @@ export async function deployPosition({
   log("deploy", `Strategy: ${activeStrategy}, Bins: ${minBinId} to ${maxBinId} (${totalBins} bins${isWideRange ? " — WIDE RANGE" : ""})`);
   log("deploy", `Amount: ${finalAmountX} X, ${finalAmountY} Y`);
   log("deploy", `Position: ${newPosition.publicKey.toString()}`);
+
+  // ── BinArray existence check ─────────────────────────────────────
+  // Meteora charges ~0.075 SOL non-refundable rent per binArray account that must be
+  // created from scratch. Derive all required binArray PDAs for this position's range
+  // and verify they already exist on-chain. Block if any are missing.
+  if (process.env.DRY_RUN !== "true") {
+    try {
+      const DLMM_PROGRAM_ID = new PublicKey("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo");
+      const MAX_BIN_PER_ARRAY = 70;
+      const lbPairKey = new PublicKey(pool_address);
+
+      const minArrayIdx = Math.floor(minBinId / MAX_BIN_PER_ARRAY);
+      const maxArrayIdx = Math.floor(maxBinId / MAX_BIN_PER_ARRAY);
+
+      const binArrayPdas = [];
+      for (let idx = minArrayIdx; idx <= maxArrayIdx; idx++) {
+        // Use twos complement for negative indices (i64 little-endian)
+        const idxBuf = new BN(idx).toTwos(64).toArrayLike(Buffer, "le", 8);
+        const [pda] = PublicKey.findProgramAddressSync(
+          [Buffer.from("bin_array"), lbPairKey.toBuffer(), idxBuf],
+          DLMM_PROGRAM_ID
+        );
+        binArrayPdas.push(pda);
+      }
+
+      const accounts = await getConnection().getMultipleAccountsInfo(binArrayPdas);
+      const missingIdxs = accounts
+        .map((a, i) => (a === null ? minArrayIdx + i : null))
+        .filter((v) => v !== null);
+
+      if (missingIdxs.length > 0) {
+        const costSol = (missingIdxs.length * 0.075).toFixed(3);
+        log("deploy", `BinArray check: ${missingIdxs.length}/${binArrayPdas.length} binArray(s) not initialized (indices: ${missingIdxs.join(", ")})`);
+        return {
+          success: false,
+          error: `Deploy blocked: ${missingIdxs.length} of ${binArrayPdas.length} required binArray account(s) are not yet initialized on-chain. Proceeding would charge ~${costSol} SOL in non-refundable rent. Choose a pool where other LPs have already initialized this price range.`,
+        };
+      }
+      log("deploy", `BinArray check: all ${binArrayPdas.length} required binArray(s) already exist ✓`);
+    } catch (binCheckErr) {
+      log("deploy", `BinArray check failed (non-blocking): ${binCheckErr.message}`);
+      // If the check itself errors (e.g. RPC issue), proceed — don't silently block deploys
+    }
+  }
 
   try {
     const txHashes = [];

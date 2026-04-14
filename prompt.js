@@ -41,16 +41,12 @@ Role: ${agentType || "GENERAL"}
  CURRENT STATE
 ═══════════════════════════════════════════
 
-Portfolio: ${JSON.stringify(portfolio, null, 2)}
-Open Positions: ${JSON.stringify(positions, null, 2)}
-Memory: ${JSON.stringify(stateSummary, null, 2)}
-Performance: ${perfSummary ? JSON.stringify(perfSummary, null, 2) : "No closed positions yet"}
+Portfolio: ${JSON.stringify(portfolio)}
+Open Positions: ${JSON.stringify(positions)}
+Memory: ${JSON.stringify(stateSummary)}
+Performance: ${perfSummary ? JSON.stringify(perfSummary) : "No closed positions yet"}
 
-Config: ${JSON.stringify({
-  screening: config.screening,
-  management: config.management,
-  schedule: config.schedule,
-}, null, 2)}
+Config: ${JSON.stringify({screening:config.screening,management:config.management,schedule:config.schedule})}
 
 ${lessons ? `═══════════════════════════════════════════
  LESSONS LEARNED

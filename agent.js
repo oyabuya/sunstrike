@@ -338,10 +338,14 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
     } catch (error) {
       log("error", `Agent loop error at step ${step}: ${error.message}`);
 
-      // If it's a rate limit, wait and retry
+      // If it's a rate limit, wait the exact duration Groq tells us, then retry this step
       if (error.status === 429) {
-        log("agent", "Rate limited, waiting 30s...");
-        await sleep(30000);
+        const errMsg = error?.error?.message || error?.message || "";
+        const match = errMsg.match(/try again in ([\d.]+)s/i);
+        const waitMs = match ? Math.ceil(parseFloat(match[1]) * 1000) + 500 : 30000;
+        log("agent", `Rate limited — waiting ${(waitMs / 1000).toFixed(1)}s before retry...`);
+        await sleep(waitMs);
+        step--; // don't consume a step on rate limit
         continue;
       }
 
