@@ -9,8 +9,8 @@
   },
   "scripts": {
     "setup": "node setup.js",
-    "start": "node index.js",
-    "dev": "DRY_RUN=true node index.js",
+    "start": "NODE_OPTIONS=--dns-result-order=ipv4first node index.js",
+    "dev": "DRY_RUN=true NODE_OPTIONS=--dns-result-order=ipv4first node index.js",
     "test:screen": "node test/test-screening.js",
     "test:agent": "DRY_RUN=true node test/test-agent.js",
     "postinstall": "node scripts/patch-anchor.js"

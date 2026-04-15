@@ -284,9 +284,12 @@ export async function runManagementCycle({ silent = false } = {}) {
         continue;
       }
       // Rule 5: fee yield too low
-      if (p.fee_per_tvl_24h != null &&
+      // PnL gate: skip if position is at a loss — hold for recovery.
+      // Never close a losing position due to low yield; stop loss handles exits at threshold.
+      if (!pnlSuspect && p.fee_per_tvl_24h != null &&
           p.fee_per_tvl_24h < config.management.minFeePerTvl24h &&
-          (p.age_minutes ?? 0) >= 60) {
+          (p.age_minutes ?? 0) >= 60 &&
+          (p.pnl_pct == null || p.pnl_pct >= 0)) {
         actionMap.set(p.position, { action: "CLOSE", rule: 5, reason: "low yield" });
         continue;
       }

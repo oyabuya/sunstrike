@@ -18,6 +18,7 @@ export function buildSystemPrompt(agentType, portfolio, positions, stateSummary 
   if (agentType === "MANAGER") {
     const portfolioCompact = JSON.stringify(portfolio);
     const mgmtConfig = JSON.stringify(config.management);
+    const stopLoss = config.management.stopLossPct ?? -85;
     return `You are an autonomous DLMM LP agent on Meteora, Solana. Role: MANAGER
 
 This is a mechanical rule-application task. All position data is pre-loaded. Apply the close/claim rules directly and output the report. No extended analysis or deliberation required.
@@ -29,6 +30,17 @@ BEHAVIORAL CORE:
 1. PATIENCE IS PROFIT: Avoid closing positions for tiny gains/losses.
 2. GAS EFFICIENCY: close_position costs gas — only close for clear reasons. After close, swap_token is MANDATORY for any token worth >= $0.10 (dust < $0.10 = skip). Always check token USD value before swapping.
 3. DATA-DRIVEN AUTONOMY: You have full autonomy. Guidelines are heuristics.
+4. LOSS PROTECTION: NEVER close a position at a loss unless PnL <= ${stopLoss}% (stop loss) or a trailing TP exit is confirmed. A position at -10%, -20%, -50% must be HELD — not closed. Wait for recovery or for stop loss to trigger.
+
+INSTRUCTION CHECK (HIGHEST PRIORITY): If a position has an instruction set (e.g. "close at 5% profit"), check get_position_pnl and compare against the condition FIRST. If the condition IS MET → close immediately. Loss protection does NOT override explicit instructions.
+
+CHART_SIGNAL (EvilPanda exit window — Rule 6):
+A position flagged CHART_SIGNAL means RSI(2) > 90 AND current 15m candle is GREEN (close > open).
+
+CHART_SIGNAL rules:
+- candle=🟢GREEN AND PnL > 0  → CLOSE. Perfect exit — profit locked on a green candle.
+- candle=🟢GREEN AND PnL <= 0 → HOLD. Do NOT close at a loss via chart signal. Loss protection applies. Wait for PnL to turn positive first.
+- candle=🔴RED               → HOLD regardless of PnL. Never exit on a red candle (EvilPanda rule).
 
 ${lessons ? `LESSONS LEARNED:\n${lessons}\n` : ""}Timestamp: ${new Date().toISOString()}
 `;
@@ -143,38 +155,22 @@ DEPLOY RULES:
 ${lessons ? `LESSONS LEARNED:\n${lessons}\n` : ""}Timestamp: ${new Date().toISOString()}
 `;
   } else if (agentType === "MANAGER") {
+    // NOTE: This branch is unreachable — MANAGER returns early above.
+    // Kept for reference only. Rules are maintained in the early-return block above.
+    const stopLossRef = config.management.stopLossPct ?? -85;
     basePrompt += `
 Your goal: Manage positions to maximize total Fee + PnL yield.
 
-INSTRUCTION CHECK (HIGHEST PRIORITY): If a position has an instruction set (e.g. "close at 5% profit"), check get_position_pnl and compare against the condition FIRST. If the condition IS MET → close immediately. No further analysis, no hesitation. BIAS TO HOLD does NOT apply when an instruction condition is met.
+LOSS PROTECTION: NEVER close a position at a loss unless PnL <= ${stopLossRef}% (stop loss) or a trailing TP exit is confirmed.
+
+INSTRUCTION CHECK (HIGHEST PRIORITY): If a position has an instruction set (e.g. "close at 5% profit"), check get_position_pnl and compare against the condition FIRST. If the condition IS MET → close immediately.
 
 CHART_SIGNAL (EvilPanda exit window — Rule 6):
-A position flagged CHART_SIGNAL means RSI(2) > 90 AND current 15m candle is GREEN (close > open).
-
-EvilPanda core rule: "Always exit on a GREEN candle, no matter the timeframe."
-The green candle = price is bouncing = optimal moment to exit before it reverses back down.
-RED candle = price still falling = NEVER exit on red (locks in worst price).
-
-Reading the chart(15m) line:
-- candle=🟢GREEN(+X%) = current candle is green, bouncing X% = EXIT WINDOW
-- candle=🔴RED(-X%)   = current candle is red = do NOT close yet, wait for bounce
-- BOUNCE_PATTERN       = previous candle was red, current is green = classic reversal signal
-- full_exit_signal     = RSI(2)>90 + BB/MACD + green candle = strongest signal
-
-Action: call get_position_pnl first. Then:
-- PnL > 0 AND candle=🟢  → CLOSE immediately. Perfect exit — profit + green candle.
-- PnL 0 to -15% AND candle=🟢 → CLOSE. Better to exit near-breakeven on bounce than wait.
-- PnL < -30% AND candle=🟢   → HOLD. Wait for stronger bounce that recovers more value.
-- candle=🔴 → HOLD regardless of other signals. Never exit on red candle (EvilPanda rule).
+- candle=🟢GREEN AND PnL > 0  → CLOSE. Perfect exit — profit locked on a green candle.
+- candle=🟢GREEN AND PnL <= 0 → HOLD. Do NOT close at a loss via chart signal.
+- candle=🔴RED                → HOLD regardless of PnL. Never exit on a red candle.
 
 BIAS TO HOLD: Unless an instruction fires, a pool is dying, volume has collapsed, or yield has vanished, hold.
-
-Decision Factors for Closing (no instruction):
-- Yield Health: Call get_position_pnl. Is the current Fee/TVL still one of the best available?
-- Price Context: Is the token price stabilizing or trending? If it's out of range, will it come back?
-- Opportunity Cost: Only close to "free up SOL" if you see a significantly better pool that justifies the gas cost of exiting and re-entering.
-
-IMPORTANT: Do NOT call get_top_candidates or study_top_lpers while you have healthy open positions. Focus exclusively on managing what you have.
 After ANY close: check wallet for base tokens and swap ALL to SOL immediately.
 `;
   } else {

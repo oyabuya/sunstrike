@@ -443,20 +443,50 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
   }
 
   // ── Out of range too long ──────────────────────────────────────
+  // EvilPanda rule: ONLY exit OOR when price PUMPED ABOVE range.
+  // If price DUMPED BELOW range — hold and wait for bounce (CHART_SIGNAL handles exit).
+  // Reasoning: when price is below our range, panic sellers are paying us fees.
+  //            Closing now = worst possible exit timing. Wait for the green candle.
   if (pos.out_of_range_since) {
     const minutesOOR = Math.floor((Date.now() - new Date(pos.out_of_range_since).getTime()) / 60000);
     if (minutesOOR >= mgmtConfig.outOfRangeWaitMinutes) {
-      return {
-        action: "OUT_OF_RANGE",
-        reason: `Out of range for ${minutesOOR}m (limit: ${mgmtConfig.outOfRangeWaitMinutes}m)`,
-      };
+      const activeBin = positionData.active_bin ?? positionData.active_bin_id ?? null;
+      const upperBin  = positionData.upper_bin  ?? positionData.max_bin_id    ?? null;
+      const lowerBin  = positionData.lower_bin  ?? positionData.min_bin_id    ?? null;
+
+      // Direction unknown → apply exit (safe default)
+      if (activeBin == null || upperBin == null) {
+        return {
+          action: "OUT_OF_RANGE",
+          reason: `Out of range for ${minutesOOR}m (limit: ${mgmtConfig.outOfRangeWaitMinutes}m)`,
+        };
+      }
+
+      // Price PUMPED above range → exit (missing fee capture, price moving away)
+      if (activeBin > upperBin) {
+        return {
+          action: "OUT_OF_RANGE",
+          reason: `Out of range for ${minutesOOR}m (limit: ${mgmtConfig.outOfRangeWaitMinutes}m) — price above range`,
+        };
+      }
+
+      // Price DUMPED below range → DO NOT exit — wait for bounce (EvilPanda)
+      if (lowerBin != null && activeBin < lowerBin) {
+        log("state", `Position ${position_address} OOR ${minutesOOR}m — price BELOW range (dump). Holding per EvilPanda — waiting for CHART_SIGNAL bounce, not exiting on red.`);
+        return null; // no exit signal
+      }
     }
   }
 
   // ── Low yield (only after position has had time to accumulate fees) ───
+  // PnL gate: never close for low yield when position is at a loss.
+  // A losing position must recover to breakeven before yield-based exit applies.
+  // Stop loss handles catastrophic losses independently.
   const { age_minutes } = positionData;
   const minAgeForYieldCheck = mgmtConfig.minAgeBeforeYieldCheck ?? 60;
+  const yieldExitAllowed = !pnl_pct_suspicious && (currentPnlPct == null || currentPnlPct >= 0);
   if (
+    yieldExitAllowed &&
     fee_per_tvl_24h != null &&
     mgmtConfig.minFeePerTvl24h != null &&
     fee_per_tvl_24h < mgmtConfig.minFeePerTvl24h &&
