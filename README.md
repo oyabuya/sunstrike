@@ -19,9 +19,9 @@ Sunstrike runs continuous screening and management cycles, deploying capital int
 
 ## What it does
 
-- **Screens pools** — scans Meteora DLMM pools against configurable thresholds (fee/TVL ratio, organic score, holder count, mcap, bin step) and surfaces high-quality opportunities
-- **Manages positions** — monitors, claims fees, and closes LP positions autonomously; decides to STAY, CLOSE, or REDEPLOY based on live data
-- **Learns from performance** — studies top LPers in target pools, saves structured lessons, and evolves screening thresholds based on closed position history
+- **Screens pools** — scans Meteora DLMM pools against configurable thresholds, then applies fusion filters from Meridian, EvilPanda, GMGN, OKX, pool memory, and launchpad risk controls before the LLM sees the shortlist
+- **Manages positions** — monitors, claims fees, and closes LP positions autonomously using a layered flow: deterministic JS exits first, chart-based EvilPanda signals second, LLM judgment only when action is required
+- **Learns from performance** — records closed-position outcomes, studies strong LPers or smart wallets, and evolves parts of screening based on real position history
 - **Discord signals** — optional Discord listener watches LP Army channels for Solana token calls and queues them for screening
 - **Telegram chat** — full agent chat via Telegram, plus cycle reports and OOR alerts
 - **Claude Code integration** — run AI-powered screening and management directly from your terminal using Claude Code slash commands
@@ -30,12 +30,20 @@ Sunstrike runs continuous screening and management cycles, deploying capital int
 
 ## How it works
 
-Meridian runs a **ReAct agent loop** — each cycle the LLM reasons over live data, calls tools, and acts. Two specialized agents run on independent cron schedules:
+Sunstrike does not operate as a pure "let the LLM decide everything" bot. The runtime is now a layered execution system:
+
+- deterministic filters and safety checks reduce low-quality or dangerous pools before the model sees them
+- deterministic management rules catch obvious exits, trailing logic, OOR state, and claim conditions without spending LLM budget
+- the LLM is used as a final decision layer for screening selection and ambiguous management actions
+
+Two specialized agents run on independent cron schedules:
 
 | Agent | Default interval | Role |
 |---|---|---|
-| **Screening Agent** | Every 30 min | Pool screening — finds and deploys into the best candidate |
-| **Management Agent** | Every 10 min | Position management — evaluates each open position and acts |
+| **Screening Agent** | Every 45 min | Pool screening — finds and deploys into the best candidate |
+| **Management Agent** | Every 15 min | Position management — evaluates each open position and acts |
+
+There is also a lightweight position poller between management cycles for peak/trailing confirmation and fast exit detection. After a deploy, the screener may tighten management cadence dynamically based on pool volatility.
 
 **Data sources:**
 - `@meteora-ag/dlmm` SDK — on-chain position data, active bin, deploy/close transactions
@@ -45,6 +53,33 @@ Meridian runs a **ReAct agent loop** — each cycle the LLM reasons over live da
 - Jupiter API — token audit, mcap, launchpad, price stats
 
 Agents are powered via **OpenRouter** and can be swapped for any compatible model.
+
+## Strategy Flow
+
+### Screening flow
+
+1. Pool discovery pulls Meteora DLMM pools using threshold gates such as TVL, volume, holder count, bin step, market cap, organic score, and fee-active-TVL ratio.
+2. Hard filters remove blacklisted tokens, blocked deployers, thematic scam patterns, CTO/community-takeover coins, occupied pools, occupied base mints, and cooldowned pools.
+3. Candidate enrichment adds GMGN security data, GMGN token info, OKX risk and price signals, smart-wallet checks, token narrative, token audit, and pool memory.
+4. More hard filters remove honeypots, excessive creator/dev ownership, wash-trading flags, blocked launchpads, excessive bot-holder concentration, and overheated price-vs-ATH setups.
+5. EvilPanda-inspired entry context is attached through SuperTrend-on-15m and smart-wallet/KOL signals.
+6. The screener LLM receives only the surviving shortlist and chooses one pool to deploy into, using a wide single-sided spot shape with `bins_above=0` and `bins_below` scaled by volatility.
+
+### Management flow
+
+1. Open positions are fetched from on-chain and Meteora portfolio/PnL sources, then reconciled with local state.
+2. JS rules update OOR state, peak tracking, trailing-drop confirmation, low-yield checks, stop-loss checks, and claim thresholds before any LLM call.
+3. EvilPanda-inspired 15m chart signals are fetched through GMGN OHLCV: RSI(2), Bollinger Bands, MACD, and green-candle bounce context.
+4. If every position is a clear `STAY`, the management cycle ends without invoking the LLM.
+5. If action is needed, the manager LLM receives a compact action block and executes only the required close, claim, or instruction-driven operations.
+6. After closes, base tokens are swapped back to SOL when value is meaningful, performance is recorded, and screening can be re-triggered if capacity opens up.
+
+### Learning and memory
+
+- `state.json` tracks position-local state such as deployment context, OOR timestamps, notes, peak PnL, and trailing confirmation state
+- `pool-memory.json` stores deploy history and pool-level recall
+- `lessons.json` records closed-position performance and can evolve parts of screening config
+- `smart-wallets.json` stores tracked LP and holder wallets, including auto-discovered wallets from LPAgent or GMGN
 
 ---
 
@@ -184,8 +219,8 @@ To trigger an agent directly, just describe what you want:
 Run screening or management on a timer inside Claude Code:
 
 ```
-/loop 30m /screen     # screen every 30 minutes
-/loop 10m /manage     # manage every 10 minutes
+/loop 45m /screen     # screen every 45 minutes
+/loop 15m /manage     # manage every 15 minutes
 ```
 
 ---
@@ -423,8 +458,8 @@ All fields are optional — defaults shown. Edit `user-config.json`.
 
 | Field | Default | Description |
 |---|---|---|
-| `managementIntervalMin` | `10` | Management cycle frequency (minutes) |
-| `screeningIntervalMin` | `30` | Screening cycle frequency (minutes) |
+| `managementIntervalMin` | `15` | Management cycle frequency (minutes) |
+| `screeningIntervalMin` | `45` | Screening cycle frequency (minutes) |
 
 ### Models
 

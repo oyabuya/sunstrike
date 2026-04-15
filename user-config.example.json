@@ -55,8 +55,8 @@
   "pnlSanityMaxDiffPct": 5,
   "solMode": false,
 
-  "managementIntervalMin": 10,
-  "screeningIntervalMin": 30,
+  "managementIntervalMin": 15,
+  "screeningIntervalMin": 45,
   "healthCheckIntervalMin": 60,
 
   "temperature": 0.373,

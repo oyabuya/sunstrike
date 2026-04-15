@@ -90,8 +90,8 @@ Sets defined in `agent.js:6-7`. If you add a tool, also add it to the relevant s
 | positionSizePct | management | 0.35 |
 | minSolToOpen | management | 0.55 |
 | outOfRangeWaitMinutes | management | 30 |
-| managementIntervalMin | schedule | 10 |
-| screeningIntervalMin | schedule | 30 |
+| managementIntervalMin | schedule | 15 |
+| screeningIntervalMin | schedule | 45 |
 | managementModel / screeningModel / generalModel | llm | openrouter/healer-alpha |
 
 **`computeDeployAmount(walletSol)`** — scales position size with wallet balance (compounding). Formula: `clamp(deployable × positionSizePct, floor=deployAmountSol, ceil=maxDeployAmount)`.

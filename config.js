@@ -88,8 +88,8 @@ export const config = {
 
   // ─── Scheduling ─────────────────────────
   schedule: {
-    managementIntervalMin:  u.managementIntervalMin  ?? 10,
-    screeningIntervalMin:   u.screeningIntervalMin   ?? 30,
+    managementIntervalMin:  u.managementIntervalMin  ?? 15,
+    screeningIntervalMin:   u.screeningIntervalMin   ?? 45,
     healthCheckIntervalMin: u.healthCheckIntervalMin ?? 60,
   },
 
