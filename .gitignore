@@ -25,6 +25,15 @@ logs/
 
 # Dev context
 context.md
+IMPLEMENTATION_LOG.json
+TESTING_PROGRESS_AND_LIVE_NOTES.md
+test-agent.md
+.codex
+.qwen/
+.agents/
+skills/
+skills-lock.json
+.claude/settings.local.json
 
 # Discord listener queue
 discord-signals.json

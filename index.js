@@ -195,6 +195,23 @@ export async function runManagementCycle({ silent = false } = {}) {
       return { ...p, recall: recallForPool(p.pool) };
     });
 
+    // Pre-fetch EvilPanda chart exit signals (RSI(2)+BB+MACD confluence) for all positions
+    const chartSignalMap = new Map();
+    if (process.env.GMGN_API_KEY) {
+      try {
+        const { getExitSignal } = await import("./tools/ohlcv.js");
+        const signalResults = await Promise.allSettled(
+          positionData.map(p => p.base_mint ? getExitSignal(p.base_mint) : Promise.resolve(null))
+        );
+        for (let i = 0; i < positionData.length; i++) {
+          const r = signalResults[i];
+          if (r.status === "fulfilled" && r.value) {
+            chartSignalMap.set(positionData[i].position, r.value);
+          }
+        }
+      } catch { /* chart signals are optional — never block management */ }
+    }
+
     // JS trailing TP check
     const exitMap = new Map();
     for (const p of positionData) {
@@ -273,6 +290,13 @@ export async function runManagementCycle({ silent = false } = {}) {
         actionMap.set(p.position, { action: "CLOSE", rule: 5, reason: "low yield" });
         continue;
       }
+      // Rule 6: EvilPanda chart exit signal — RSI(2)>90 + BB/MACD confluence
+      // Not a hard close — LLM evaluates in context of PnL and position health.
+      const chartSig = chartSignalMap.get(p.position);
+      if (chartSig?.exit_signal) {
+        actionMap.set(p.position, { action: "CHART_SIGNAL", rule: 6, reason: chartSig.summary, chartSig });
+        continue;
+      }
       // Claim rule
       if ((p.unclaimed_fees_usd ?? 0) >= config.management.minClaimAmount) {
         actionMap.set(p.position, { action: "CLAIM" });
@@ -290,11 +314,14 @@ export async function runManagementCycle({ silent = false } = {}) {
       const inRange = p.in_range ? "🟢 IN" : `🔴 OOR ${p.minutes_out_of_range ?? 0}m`;
       const val = config.management.solMode ? `◎${p.total_value_usd ?? "?"}` : `$${p.total_value_usd ?? "?"}`;
       const unclaimed = config.management.solMode ? `◎${p.unclaimed_fees_usd ?? "?"}` : `$${p.unclaimed_fees_usd ?? "?"}`;
-      const statusLabel = act.action === "INSTRUCTION" ? "HOLD (instruction)" : act.action;
+      const statusLabel = act.action === "INSTRUCTION" ? "HOLD (instruction)"
+        : act.action === "CHART_SIGNAL" ? `📊 CHART_SIGNAL`
+        : act.action;
       let line = `**${p.pair}** | Age: ${p.age_minutes ?? "?"}m | Val: ${val} | Unclaimed: ${unclaimed} | PnL: ${p.pnl_pct ?? "?"}% | Yield: ${p.fee_per_tvl_24h ?? "?"}% | ${inRange} | ${statusLabel}`;
       if (p.instruction) line += `\nNote: "${p.instruction}"`;
       if (act.action === "CLOSE" && act.rule === "exit") line += `\n⚡ Trailing TP: ${act.reason}`;
       if (act.action === "CLOSE" && act.rule && act.rule !== "exit") line += `\nRule ${act.rule}: ${act.reason}`;
+      if (act.action === "CHART_SIGNAL") line += `\n📊 ${act.reason}`;
       if (act.action === "CLAIM") line += `\n→ Claiming fees`;
       return line;
     });
@@ -319,6 +346,7 @@ export async function runManagementCycle({ silent = false } = {}) {
 
       const actionBlocks = actionPositions.map((p) => {
         const act = actionMap.get(p.position);
+        const chartSig = chartSignalMap.get(p.position);
         return [
           `POSITION: ${p.pair} (${p.position})`,
           `  pool: ${p.pool}`,
@@ -326,6 +354,7 @@ export async function runManagementCycle({ silent = false } = {}) {
           `  pnl_pct: ${p.pnl_pct}% | unclaimed_fees: ${cur}${p.unclaimed_fees_usd} | value: ${cur}${p.total_value_usd} | fee_per_tvl_24h: ${p.fee_per_tvl_24h ?? "?"}%`,
           `  bins: lower=${p.lower_bin} upper=${p.upper_bin} active=${p.active_bin} | oor_minutes: ${p.minutes_out_of_range ?? 0}`,
           p.instruction ? `  instruction: "${p.instruction}"` : null,
+          chartSig ? `  chart(15m): candle=${chartSig.is_green_candle ? "🟢GREEN" : "🔴RED"}(${chartSig.candle_body_pct > 0 ? "+" : ""}${chartSig.candle_body_pct}%) rsi2=${chartSig.rsi2} bb_above=${chartSig.bb_above_upper} macd_green=${chartSig.macd_first_green}${chartSig.bounce_pattern ? " BOUNCE_PATTERN" : ""}${chartSig.exit_signal ? " → EXIT WINDOW" : ""}` : null,
         ].filter(Boolean).join("\n");
       }).join("\n\n");
 
@@ -339,8 +368,10 @@ RULES:
 - CLAIM: call claim_fees with position address
 - INSTRUCTION: evaluate the instruction condition. If met → close_position. If not → HOLD, do nothing.
 - ⚡ exit alerts: close immediately, no exceptions
+- CHART_SIGNAL: call get_position_pnl first, then decide per CHART_SIGNAL rules in your system prompt.
 
 Execute the required actions. Do NOT re-evaluate CLOSE/CLAIM — rules already applied. Just execute.
+CHART_SIGNAL requires your judgment — call get_position_pnl then decide.
 After executing, write a brief one-line result per position.
       `, config.llm.maxSteps, [], "MANAGER", config.llm.managementModel, config.llm.maxTokens, {
         onToolStart: async ({ name }) => { await liveMessage?.toolStart(name); },
@@ -530,12 +561,25 @@ export async function runScreeningCycle({ silent = false } = {}) {
         pool.dev_sold_all       ? "dev_sold_all(bullish)" : null,
       ].filter(Boolean).join(", ");
 
+      // GMGN signals
+      const gmgnParts = [
+        pool.gmgn_top10        != null ? `top10=${(pool.gmgn_top10 * 100).toFixed(1)}%`      : null,
+        pool.creator_hold_rate != null ? `creator_hold=${(pool.creator_hold_rate * 100).toFixed(1)}%` : null,
+        pool.gmgn_bundler_pct  != null ? `bundler=${pool.gmgn_bundler_pct.toFixed(1)}%`      : null,
+        pool.rat_trader_pct    != null ? `rat_trader=${pool.rat_trader_pct.toFixed(1)}%`     : null,
+        pool.gmgn_smart_wallets != null ? `smart_wallets=${pool.gmgn_smart_wallets}`         : null,
+        pool.gmgn_kol_count    != null ? `kols=${pool.gmgn_kol_count}`                       : null,
+        pool.renounced_mint    != null ? `renounced=${pool.renounced_mint ? "yes" : "NO"}`   : null,
+      ].filter(Boolean).join(", ");
+
       const block = [
         `POOL: ${pool.name} (${pool.pool})`,
         `  metrics: bin_step=${pool.bin_step}, fee_pct=${pool.fee_pct}%, fee_tvl=${pool.fee_active_tvl_ratio}, vol=$${pool.volume_window}, tvl=$${pool.active_tvl}, volatility=${pool.volatility}, mcap=$${pool.mcap}, organic=${pool.organic_score}${pool.token_age_hours != null ? `, age=${pool.token_age_hours}h` : ""}`,
         `  audit: top10=${top10Pct}%, bots=${botPct}%, fees=${feesSol}SOL${launchpad ? `, launchpad=${launchpad}` : ""}`,
         okxParts ? `  okx: ${okxParts}` : okxUnavailable ? `  okx: unavailable` : null,
         okxTags  ? `  tags: ${okxTags}` : null,
+        gmgnParts ? `  gmgn: ${gmgnParts}` : null,
+        pool.st_direction ? `  supertrend: ${pool.st_direction}(${pool.st_pct_vs_price}%)${pool.st_entry_ok ? " ✓ entry_ok" : " ⚠ downtrend"}` : null,
         pool.price_vs_ath_pct != null ? `  ath: price_vs_ath=${pool.price_vs_ath_pct}%${pool.top_cluster_trend ? `, top_cluster=${pool.top_cluster_trend}` : ""}` : null,
         `  smart_wallets: ${sw?.in_pool?.length ?? 0} present${sw?.in_pool?.length ? ` → CONFIDENCE BOOST (${sw.in_pool.map(w => w.name).join(", ")})` : ""}`,
         activeBin != null ? `  active_bin: ${activeBin}` : null,
@@ -564,11 +608,9 @@ STEPS:
    - pool_address: <pool address>
    - amount_y: ${deployAmount}  ← REQUIRED, always pass this exact value
    - amount_x: 0
-   - strategy: (select by pool volatility score)
-       volatility < 2  → "spot"
-       volatility 2–3  → "spot"
-       volatility > 3  → "bid_ask"
-   - bins_below: round(35 + (volatility/5)*34) clamped to [35,69]
+   - strategy: "spot"  ← always spot, no exceptions (wide range = uniform distribution)
+   - bins_below: round(100 + (volatility/5)*50) clamped to [100,150]
+       volatility 0 → 100 bins | volatility 2.5 → 125 bins | volatility 5 → 150 bins
    - bins_above: 0
    - active_bin: (use pre-fetched value above)
 3. Report in this exact format (no tables, no extra sections):
@@ -577,7 +619,7 @@ STEPS:
    <pool name>
    <pool address>
 
-   ◎ ${deployAmount} SOL | <strategy> | bin <active_bin>
+   ◎ ${deployAmount} SOL | spot | bin <active_bin>
    Range: bin <active_bin - bins_below> → <active_bin>
    Downside buffer: <negative %>
 
@@ -1008,7 +1050,8 @@ Commands:
           `Deploy ${DEPLOY} SOL into pool ${pool.pool} (${pool.name}). Call get_active_bin first then deploy_position. Report result.`,
           config.llm.maxSteps,
           [],
-          "SCREENER"
+          "SCREENER",
+          config.llm.screeningModel
         );
         console.log(`\n${reply}\n`);
         launchCron();
@@ -1024,7 +1067,8 @@ Commands:
           `get_top_candidates, pick the best one, get_active_bin, deploy_position with ${DEPLOY} SOL. Execute now, don't ask.`,
           config.llm.maxSteps,
           [],
-          "SCREENER"
+          "SCREENER",
+          config.llm.screeningModel
         );
         console.log(`\n${reply}\n`);
         launchCron();
@@ -1143,7 +1187,8 @@ For each pool, call study_top_lpers then move to the next. After studying all po
 Focus on: hold duration, entry/exit timing, what win rates look like, whether scalpers or holders dominate.`,
           config.llm.maxSteps,
           [],
-          "GENERAL"
+          "GENERAL",
+          config.llm.generalModel
         );
         console.log(`\n${reply}\n`);
       });
@@ -1200,7 +1245,7 @@ Focus on: hold duration, entry/exit timing, what win rates look like, whether sc
       await agentLoop(`
 STARTUP CHECK
 1. get_wallet_balance. 2. get_my_positions. ${startupStep3} 4. Report.
-      `, config.llm.maxSteps, [], "SCREENER");
+      `, config.llm.maxSteps, [], "SCREENER", config.llm.screeningModel);
     } catch (e) {
       log("startup_error", e.message);
     }

@@ -17,6 +17,48 @@ const DATAPI_JUP = "https://datapi.jup.ag/v1";
 const POOL_DISCOVERY_BASE = "https://pool-discovery-api.datapi.meteora.ag";
 const DLMM_ANALYTICS_BASE = "https://dlmm.datapi.meteora.ag";
 
+// ─── Tematic keyword blacklist (EvilPanda — coins to avoid) ─────────────────
+// Political figures, celebrity coins, justice/narrative scams — all tend to
+// slow-rug without warning. Hard filter, no override.
+const TEMATIC_TERMS = [
+  // Political figures
+  "trump", "elon", "musk", "barron", "baron", "melania", "biden", "obama",
+  "harris", "zelensky", "netanyahu", "kim jong", "putin", "modi",
+  // Celebrity coins
+  "kanye", "kardashian", "bieber", "taylor swift",
+  // Justice / narrative scams
+  "justice for", "iryna", "rip ",
+].map(t => t.toLowerCase());
+
+function isThematic(name, symbol) {
+  const text = `${(name || "")} ${(symbol || "")}`.toLowerCase();
+  return TEMATIC_TERMS.some(t => text.includes(t));
+}
+
+// ─── DexScreener CTO cache (refreshed every 10 min) ─────────────────────────
+// Community Takeover coins: new devs collect creator fees while dumping chart.
+let _ctoMints    = new Set();
+let _ctoLastFetch = 0;
+
+async function getCtoMints() {
+  if (Date.now() - _ctoLastFetch < 10 * 60 * 1_000) return _ctoMints;
+  try {
+    const res = await ftch("https://api.dexscreener.com/community-takeovers/latest/v1");
+    if (!res.ok) return _ctoMints;
+    const list = await res.json();
+    _ctoMints = new Set(
+      (Array.isArray(list) ? list : [])
+        .filter(t => t.chainId === "solana")
+        .map(t => t.tokenAddress)
+    );
+    _ctoLastFetch = Date.now();
+    log("screening", `CTO cache refreshed: ${_ctoMints.size} CTO tokens on Solana`);
+  } catch {
+    // keep previous cache on network error
+  }
+  return _ctoMints;
+}
+
 /**
  * Fetch hourly volume for the last 12h and return a trend signal.
  * trend_pct > 0 = volume growing, < 0 = shrinking.
@@ -114,6 +156,33 @@ export async function discoverPools({
     return true;
   });
 
+  // Tematic keyword blacklist — political/celebrity/justice coins (EvilPanda)
+  const beforeTematic = pools.length;
+  pools = pools.filter((p) => {
+    if (isThematic(p.name, p.base?.symbol)) {
+      log("screening", `Tematic filter: dropped ${p.base?.symbol} — political/celebrity/narrative coin`);
+      return false;
+    }
+    return true;
+  });
+  if (pools.length < beforeTematic)
+    log("screening", `Tematic filter removed ${beforeTematic - pools.length} pool(s)`);
+
+  // CTO filter — Community Takeover coins (EvilPanda: avoid always)
+  const ctoMints = await getCtoMints();
+  if (ctoMints.size > 0) {
+    const beforeCto = pools.length;
+    pools = pools.filter((p) => {
+      if (p.base?.mint && ctoMints.has(p.base.mint)) {
+        log("screening", `CTO filter: dropped ${p.base?.symbol} — community takeover coin`);
+        return false;
+      }
+      return true;
+    });
+    if (pools.length < beforeCto)
+      log("screening", `CTO filter removed ${beforeCto - pools.length} pool(s)`);
+  }
+
   const filtered = condensed.length - pools.length;
   if (filtered > 0) log("blacklist", `Filtered ${filtered} pool(s) with blacklisted tokens/devs`);
 
@@ -207,6 +276,84 @@ export async function getTopCandidates({ limit = 10 } = {}) {
       }
     }
   }
+  // Enrich with GMGN data — creator hold rate, smart wallets, bundler/rat trader exposure
+  // Runs in parallel with OKX enrichment below; failures are soft (null = skip).
+  if (eligible.length > 0 && process.env.GMGN_API_KEY) {
+    const { getGmgnSecurity, getGmgnInfo } = await import("./gmgn.js");
+    const gmgnResults = await Promise.allSettled(
+      eligible.map(async (p) => {
+        if (!p.base?.mint) return { sec: null, info: null };
+        const [sec, info] = await Promise.allSettled([
+          getGmgnSecurity(p.base.mint),
+          getGmgnInfo(p.base.mint),
+        ]);
+        return {
+          sec:  sec.status  === "fulfilled" ? sec.value  : null,
+          info: info.status === "fulfilled" ? info.value : null,
+        };
+      })
+    );
+    for (let i = 0; i < eligible.length; i++) {
+      const r = gmgnResults[i];
+      if (r.status !== "fulfilled") continue;
+      const { sec, info } = r.value;
+      if (sec) {
+        if (sec.top_10_holder_rate != null) eligible[i].gmgn_top10     = sec.top_10_holder_rate;
+        if (sec.renounced_mint     != null) eligible[i].renounced_mint  = sec.renounced_mint;
+        if (sec.is_honeypot        != null) eligible[i].gmgn_honeypot   = sec.is_honeypot;
+      }
+      if (info) {
+        if (info.creator_hold_rate != null) eligible[i].creator_hold_rate = info.creator_hold_rate;
+        if (info.dev_hold_rate     != null) eligible[i].dev_hold_rate      = info.dev_hold_rate;
+        if (info.bundler_pct       != null) eligible[i].gmgn_bundler_pct   = info.bundler_pct;
+        if (info.rat_trader_pct    != null) eligible[i].rat_trader_pct     = info.rat_trader_pct;
+        if (info.smart_wallets     != null) eligible[i].gmgn_smart_wallets = info.smart_wallets;
+        if (info.renowned_wallets  != null) eligible[i].gmgn_kol_count     = info.renowned_wallets;
+      }
+    }
+
+    // Honeypot hard filter (GMGN confirms)
+    eligible.splice(0, eligible.length, ...eligible.filter((p) => {
+      if (p.gmgn_honeypot === true) {
+        log("screening", `GMGN honeypot filter: dropped ${p.name}`);
+        pushFilteredReason(filteredOut, p, "GMGN honeypot confirmed");
+        return false;
+      }
+      return true;
+    }));
+
+    // Dev/creator holding hard filter — dev holding > 5% = danger (EvilPanda: even 1% is red flag)
+    // We use 5% as hard cutoff; 1-5% is flagged in prompt as caution.
+    const maxDevHold = config.screening.maxDevHoldPct ?? 5;
+    eligible.splice(0, eligible.length, ...eligible.filter((p) => {
+      const hold = p.creator_hold_rate ?? p.dev_hold_rate;
+      if (hold != null && hold > maxDevHold) {
+        log("screening", `Dev hold filter: dropped ${p.name} — creator/dev holds ${(hold * 100).toFixed(1)}%`);
+        pushFilteredReason(filteredOut, p, `dev/creator holds ${(hold * 100).toFixed(1)}% > ${maxDevHold}% limit`);
+        return false;
+      }
+      return true;
+    }));
+  }
+
+  // SuperTrend entry signal (EvilPanda: enter when price is ABOVE SuperTrend)
+  // Soft signal only — LLM weighs this, not a hard filter.
+  // direction='up' = confirmed uptrend = good entry window
+  // direction='down' = downtrend already started = lower conviction
+  if (eligible.length > 0 && process.env.GMGN_API_KEY) {
+    const { getEntrySignal } = await import("./ohlcv.js");
+    const stResults = await Promise.allSettled(
+      eligible.map(p => p.base?.mint ? getEntrySignal(p.base.mint) : Promise.resolve(null))
+    );
+    for (let i = 0; i < eligible.length; i++) {
+      const r = stResults[i];
+      if (r.status !== "fulfilled" || !r.value) continue;
+      eligible[i].st_direction    = r.value.st_direction;
+      eligible[i].st_pct_vs_price = r.value.st_pct_vs_price;
+      eligible[i].st_entry_ok     = r.value.entry_ok;
+    }
+  }
+
   // Enrich with OKX data — advanced info (risk/bundle/sniper) + ATH price (no API key required)
   if (eligible.length > 0) {
     const { getAdvancedInfo, getPriceInfo, getClusterList, getRiskFlags } = await import("./okx.js");
@@ -303,6 +450,24 @@ export async function getTopCandidates({ limit = 10 } = {}) {
     });
     eligible.splice(0, eligible.length, ...filtered);
     if (eligible.length < before) log("dev_blocklist", `Filtered ${before - eligible.length} pool(s) via OKX creator check`);
+
+    // Auto-discover smart wallets from pools with strong smart money signals.
+    // Background only — never delays screening result.
+    // Trigger condition: OKX confirms smart_money_buy OR KOL is in top clusters.
+    if (process.env.LPAGENT_API_KEY && eligible.length > 0) {
+      const smartMoneyPools = eligible.filter(p =>
+        p.smart_money_buy === true || p.kol_in_clusters === true
+      );
+      if (smartMoneyPools.length > 0) {
+        const { autoDiscoverSmartWallets } = await import("../smart-wallets.js");
+        Promise.allSettled(
+          smartMoneyPools.map(p =>
+            autoDiscoverSmartWallets(p.pool, p.name, p.base?.mint)
+              .then(r => { if (r.added > 0) log("smart_wallets", `Screening discovery (${r.source}): +${r.added} wallet(s) from ${p.name}`); })
+          )
+        ).catch(() => {});
+      }
+    }
   }
 
   return {

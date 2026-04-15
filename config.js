@@ -38,10 +38,11 @@ export const config = {
     maxBinStep:        u.maxBinStep        ?? 125,
     timeframe:         u.timeframe         ?? "5m",
     category:          u.category          ?? "trending",
-    minTokenFeesSol:   u.minTokenFeesSol   ?? 30,  // global fees paid (priority+jito tips). below = bundled/scam
-    maxBundlePct:      u.maxBundlePct      ?? 30,  // max bundle holding % (OKX advanced-info)
+    minTokenFeesSol:   u.minTokenFeesSol   ?? 50,  // global fees paid (priority+jito tips). below = bundled/scam
+    maxBundlePct:      u.maxBundlePct      ?? 60,  // max bundle holding % — EvilPanda: 60% is the real threshold
     maxBotHoldersPct:  u.maxBotHoldersPct  ?? 30,  // max bot holder addresses % (Jupiter audit)
-    maxTop10Pct:       u.maxTop10Pct       ?? 60,  // max top 10 holders concentration
+    maxTop10Pct:       u.maxTop10Pct       ?? 30,  // max top 10 holders concentration (EvilPanda: >30% = red flag)
+    maxDevHoldPct:     u.maxDevHoldPct     ?? 5,   // max creator/dev hold % (EvilPanda: even 1% is red flag; hard cutoff at 5%)
     blockedLaunchpads:  u.blockedLaunchpads  ?? [],  // e.g. ["letsbonk.fun", "pump.fun"]
     minTokenAgeHours:   u.minTokenAgeHours   ?? 2,    // skip tokens < 2h old (demand belum terbukti)
     maxTokenAgeHours:   u.maxTokenAgeHours   ?? 72,   // skip tokens > 72h (momentum mungkin sudah lewat)

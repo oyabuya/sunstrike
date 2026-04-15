@@ -1,8 +1,19 @@
-# Meridian
+# Sunstrike
 
 **Autonomous Meteora DLMM liquidity management agent for Solana, powered by LLMs.**
 
-Meridian runs continuous screening and management cycles, deploying capital into high-quality Meteora DLMM pools and closing positions based on live PnL, yield, and range data. It learns from every position it closes.
+Sunstrike is a fork that started from `yunus-0x/meridian` and has since evolved into its own strategy stack. It no longer runs a head-to-head copy of the original repo approach. Instead, it uses a strategy fusion: the original Meridian framework and execution flow combined with EvilPanda-inspired screening, exit logic, and a different risk-management posture.
+
+Sunstrike runs continuous screening and management cycles, deploying capital into high-quality Meteora DLMM pools and closing positions based on live PnL, yield, and range data. It learns from every position it closes.
+
+---
+
+## Strategy Identity
+
+- **Foundation:** Meridian provides the autonomous agent loop, tool orchestration, portfolio management flow, and DLMM execution framework
+- **Fusion layer:** EvilPanda ideas inform screening filters, pool selection bias, exit interpretation, and chart-based risk controls
+- **Risk posture:** this fork uses its own parameter tuning, safeguards, and management thresholds rather than trying to mirror the upstream risk profile
+- **Project stance:** this repo should be understood as a strategy fusion, not a straight merge and not a like-for-like clone of upstream behavior
 
 ---
 
@@ -53,8 +64,8 @@ Agents are powered via **OpenRouter** and can be swapped for any compatible mode
 ### 1. Clone & install
 
 ```bash
-git clone https://github.com/yunus-0x/meridian
-cd meridian
+git clone https://github.com/oyabuya/sunstrike
+cd sunstrike
 npm install
 ```
 
@@ -133,10 +144,10 @@ REPL commands:
 
 ### Claude Code terminal (recommended)
 
-Install [Claude Code](https://claude.ai/code) and use it from inside the meridian directory. Claude Code has built-in agents and slash commands that use the `meridian` CLI under the hood.
+Install [Claude Code](https://claude.ai/code) and use it from inside the `sunstrike` directory. Claude Code has built-in agents and slash commands that use the CLI under the hood.
 
 ```bash
-cd meridian
+cd sunstrike
 claude
 ```
 

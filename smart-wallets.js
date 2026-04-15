@@ -3,6 +3,14 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { log } from "./logger.js";
 
+// ─── Auto-discovery config ────────────────────────────────────────────────────
+const AUTO_DISCOVER_MIN_WIN_RATE   = 0.65;   // LPAgent: 65% LP win rate
+const AUTO_DISCOVER_MIN_ROI        = 0.05;   // LPAgent: 5% ROI minimum
+const AUTO_DISCOVER_LIMIT          = 10;     // top N LPers to study per pool
+const GMGN_MIN_REALIZED_PROFIT_USD = 50;     // GMGN fallback: min $50 realized profit
+const GMGN_SMART_TAGS = new Set(["smart_degen", "kol", "renowned", "TOP10", "KOL"]);
+const GMGN_HOLDER_LIMIT = 100;               // GMGN returns max 100 holders
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WALLETS_PATH = path.join(__dirname, "smart-wallets.json");
 
@@ -49,6 +57,154 @@ export function removeSmartWallet({ address }) {
 export function listSmartWallets() {
   const { wallets } = loadWallets();
   return { total: wallets.length, wallets };
+}
+
+/**
+ * Auto-discover top LPers from a pool and add them as smart wallets.
+ *
+ * Triggered automatically after:
+ *   1. Successful deploy_position — we learn who the best LPers are in our pool
+ *   2. Screening when smart_money signal present — we track who's actively LP-ing
+ *
+ * Criteria (conservative — only genuinely skilled LPers):
+ *   - win_rate >= 65%
+ *   - roi >= 5%
+ *   - total_lp >= 3 (not a one-off)
+ *
+ * Requires LPAGENT_API_KEY. If not set, skips silently.
+ * Always runs in background — never blocks the calling operation.
+ *
+ * @param {string} poolAddress  Meteora pool address
+ * @param {string} poolName     Pool display name (e.g. "BULL/SOL") — used for wallet label
+ * @returns {{ added: number, skipped: number, total_studied: number }}
+ */
+export async function autoDiscoverSmartWallets(poolAddress, poolName = "", baseMint = null) {
+  const label = poolName || poolAddress.slice(0, 8);
+
+  // ── PRIMARY: LPAgent (LP performance rankings) ──────────────────────────────
+  if (process.env.LPAGENT_API_KEY) {
+    return _discoverViaLpAgent(poolAddress, poolName);
+  }
+
+  // ── FALLBACK: GMGN token holders (top traders with PnL) ─────────────────────
+  // When LPAgent is unavailable, discover profitable wallets from GMGN.
+  // These are token traders (not LP-specific), stored as type="holder".
+  // They serve as smart money signals across pools with the same base token.
+  if (process.env.GMGN_API_KEY) {
+    // Need base token mint — try to fetch from pool data if not provided
+    let mint = baseMint;
+    if (!mint) {
+      try {
+        const { getPoolDetail } = await import("./tools/screening.js");
+        const pool = await getPoolDetail({ pool_address: poolAddress });
+        mint = pool?.base?.mint ?? null;
+      } catch { /* pool detail unavailable — skip */ }
+    }
+    if (!mint) {
+      log("smart_wallets", `GMGN fallback skipped for ${label}: base mint unavailable`);
+      return { added: 0, skipped: 0, total_studied: 0, source: "none" };
+    }
+    return _discoverViaGmgn(mint, poolName);
+  }
+
+  log("smart_wallets", `Auto-discover skipped for ${label}: no LPAGENT_API_KEY or GMGN_API_KEY`);
+  return { added: 0, skipped: 0, total_studied: 0 };
+}
+
+// ─── LPAgent path ────────────────────────────────────────────────────────────
+async function _discoverViaLpAgent(poolAddress, poolName) {
+  const label = poolName || poolAddress.slice(0, 8);
+  try {
+    const { studyTopLPers } = await import("./tools/study.js");
+    const result = await studyTopLPers({ pool_address: poolAddress, limit: AUTO_DISCOVER_LIMIT });
+
+    if (!result.lpers?.length) {
+      log("smart_wallets", `LPAgent discover: no credible LPers in ${label}`);
+      return { added: 0, skipped: 0, total_studied: 0, source: "lpagent", reason: result.message };
+    }
+
+    let added = 0, skipped = 0;
+    const pairLabel = (poolName.split("/")[0] || poolAddress.slice(0, 6)).toUpperCase();
+
+    for (const lper of result.lpers) {
+      const s = lper.summary;
+      const winRate = parseFloat(s.win_rate) / 100;
+      const roi     = parseFloat(s.roi)      / 100;
+      if (winRate < AUTO_DISCOVER_MIN_WIN_RATE || roi < AUTO_DISCOVER_MIN_ROI) { skipped++; continue; }
+
+      const name = `LP-${lper.owner.slice(0, 6)}-${pairLabel}`;
+      const r = addSmartWallet({ name, address: lper.owner, category: "auto", type: "lp" });
+      if (r.success) {
+        added++;
+        log("smart_wallets", `LPAgent +${name}: win=${s.win_rate} roi=${s.roi} hold=${s.avg_hold_hours}h`);
+      } else { skipped++; }
+    }
+
+    if (added > 0) log("smart_wallets", `LPAgent discover ${label}: +${added} LP wallets`);
+    return { added, skipped, total_studied: result.lpers.length, source: "lpagent" };
+  } catch (e) {
+    log("smart_wallets", `LPAgent discover error (${label}): ${e.message}`);
+    return { added: 0, skipped: 0, total_studied: 0, source: "lpagent", error: e.message };
+  }
+}
+
+// ─── GMGN fallback path ───────────────────────────────────────────────────────
+async function _discoverViaGmgn(baseMint, poolName) {
+  const label = poolName || baseMint.slice(0, 8);
+  try {
+    const { exec } = await import("child_process");
+    const { promisify } = await import("util");
+    const execAsync = promisify(exec);
+
+    const { stdout } = await execAsync(
+      `gmgn-cli token holders --chain sol --address ${baseMint} --raw`,
+      { env: { ...process.env, GMGN_API_KEY: process.env.GMGN_API_KEY }, timeout: 10_000 }
+    );
+
+    const data   = JSON.parse(stdout.trim());
+    const holders = data?.list ?? (Array.isArray(data) ? data : []);
+
+    if (!holders.length) {
+      log("smart_wallets", `GMGN discover: no holders returned for ${label}`);
+      return { added: 0, skipped: 0, total_studied: 0, source: "gmgn" };
+    }
+
+    let added = 0, skipped = 0;
+    const pairLabel = (poolName.split("/")[0] || baseMint.slice(0, 6)).toUpperCase();
+
+    for (const h of holders.slice(0, GMGN_HOLDER_LIMIT)) {
+      const address = h.address;
+      if (!address || !SOLANA_PUBKEY_RE.test(address)) { skipped++; continue; }
+
+      const realizedProfit = parseFloat(h.realized_profit ?? 0);
+      const tagV2          = h.wallet_tag_v2 ?? "";
+      const tags           = Array.isArray(h.tags) ? h.tags : [];
+      const isSmartTagged  = GMGN_SMART_TAGS.has(tagV2) || tags.some(t => GMGN_SMART_TAGS.has(t));
+
+      // Filter: meaningful profit AND (smart-tagged OR very profitable)
+      const isQualified = realizedProfit >= GMGN_MIN_REALIZED_PROFIT_USD &&
+                          (isSmartTagged || realizedProfit >= 200);
+      if (!isQualified) { skipped++; continue; }
+
+      const name = `SW-${address.slice(0, 6)}-${pairLabel}`;
+      const r = addSmartWallet({
+        name,
+        address,
+        category: "gmgn-auto",
+        type:     "holder",   // token trader, not confirmed LP provider
+      });
+      if (r.success) {
+        added++;
+        log("smart_wallets", `GMGN +${name}: profit=$${realizedProfit.toFixed(0)} tag=${tagV2}`);
+      } else { skipped++; }
+    }
+
+    if (added > 0) log("smart_wallets", `GMGN discover ${label}: +${added} holder wallets (${skipped} skipped)`);
+    return { added, skipped, total_studied: holders.length, source: "gmgn" };
+  } catch (e) {
+    log("smart_wallets", `GMGN discover error (${label}): ${e.message}`);
+    return { added: 0, skipped: 0, total_studied: 0, source: "gmgn", error: e.message };
+  }
 }
 
 // Cache wallet positions for 5 minutes to avoid hammering RPC

@@ -1,6 +1,8 @@
-# Meridian — CLAUDE.md
+# Sunstrike — CLAUDE.md
 
 Autonomous DLMM liquidity provider agent for Meteora pools on Solana.
+
+This repository began as a fork of `yunus-0x/meridian`, but the active strategy is no longer intended to mirror upstream one-for-one. The current approach is a strategy fusion: Meridian's agent/runtime architecture combined with EvilPanda-inspired screening and exit ideas, plus fork-specific risk management and deployment rules.
 
 ---
 
@@ -123,12 +125,15 @@ Before `deploy_position` executes:
 Linear formula based on pool volatility (set in screener prompt, `index.js`):
 
 ```
-bins_below = round(35 + (volatility / 5) * 34), clamped to [35, 69]
+bins_below = round(100 + (volatility / 5) * 50), clamped to [100, 150]
 ```
 
-- Low volatility (0) → 35 bins
-- High volatility (5+) → 69 bins
+- Low volatility (0) → 100 bins
+- High volatility (5+) → 150 bins
 - Any value in between is valid (continuous, not tiered)
+- Strategy is always `"spot"` (uniform distribution — wide range philosophy)
+- Philosophy: be the **final exit liquidity provider**. Wide range = rare OOR = more fee accumulation.
+  At bin_step 80: 100 bins = -80% downside buffer. At bin_step 125: 100 bins = -125% (full floor).
 
 ---
 
@@ -158,8 +163,31 @@ Two signals used in `getTokenHolders()`:
 - `common_funder` — multiple wallets funded by same source
 - `funded_same_window` — multiple wallets funded in same time window
 
-**Thresholds in config**: `maxBundlersPct` (default 30%), `maxTop10Pct` (default 60%)
+**Thresholds in config**: `maxBundlePct` (default 60% — EvilPanda threshold), `maxTop10Pct` (default 30%)
 Jupiter audit API: `botHoldersPercentage` (5–25% is normal for legitimate tokens)
+
+---
+
+## GMGN Integration (tools/gmgn.js)
+
+Requires `GMGN_API_KEY` in `.env` and `gmgn-cli` globally installed.
+
+Two functions called during `getTopCandidates()` enrichment (parallel with OKX):
+- `getGmgnSecurity(mint)` → `top_10_holder_rate`, `renounced_mint`, `is_honeypot`
+- `getGmgnInfo(mint)` → `creator_hold_rate`, `dev_hold_rate`, `bundler_pct`, `rat_trader_pct`, `smart_wallets`, `renowned_wallets`
+
+**Hard filters added from GMGN data:**
+- `gmgn_honeypot = true` → immediate drop
+- `creator_hold_rate > maxDevHoldPct (5%)` → drop (dev can dump anytime)
+
+## Tematic Keyword Blacklist & CTO Filter (screening.js)
+
+**Tematic filter** (`TEMATIC_TERMS` array in `discoverPools()`):
+Drops tokens whose name/symbol contains political figures (trump, elon, musk, barron...), celebrity names (kanye...), or justice/narrative scam patterns. Applied before OKX/GMGN enrichment.
+
+**CTO filter** (DexScreener `/community-takeovers/latest/v1`):
+Cache refreshed every 10 min. Drops any token whose mint matches a known CTO token on Solana.
+No API key required — DexScreener public endpoint.
 
 ---
 
