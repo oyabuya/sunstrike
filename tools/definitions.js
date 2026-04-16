@@ -124,27 +124,9 @@ Only call this if you need the current price to calculate a specific bin range (
     type: "function",
     function: {
       name: "deploy_position",
-      description: `Open a new DLMM liquidity position.
-
-PRIORITY ORDER for strategy and bins:
-1. User explicitly specifies → always follow exactly (user override is absolute)
-2. Active strategy set → use its lp_strategy and bins
-3. No active strategy → select by pool volatility score (from screening prompt instructions)
-
-HARD RULES:
-- Never use 'curve'.
-- Bin Step: Only deploy in pools with bin_step between 80 and 125.
-
-Strategy selection by volatility (when no active strategy):
-- volatility < 2  → "spot"    (lower OOR risk for automated agent)
-- volatility 2–3  → "spot"
-- volatility > 3  → "bid_ask" (captures wider price swings)
-
-Guidelines (only when user hasn't specified):
-- Bins: choose 35–69 for standard volatility; up to 350 for wide-range strategies. Max 1400 total.
-- Deposit: single-sided SOL only (amount_y, amount_x=0) unless user specifies otherwise.
-
-WARNING: This executes a real on-chain transaction. Check DRY_RUN mode.`,
+      description: `Open a new DLMM liquidity position. Executes a real on-chain transaction.
+Strategy and bin parameters are governed by the screener system prompt instructions — follow those exactly.
+Single-sided SOL deposit only (amount_y, amount_x=0) unless user specifies otherwise.`,
       parameters: {
         type: "object",
         properties: {
@@ -171,7 +153,7 @@ WARNING: This executes a real on-chain transaction. Check DRY_RUN mode.`,
           },
           bins_below: {
             type: "number",
-            description: "Number of bins below active bin. If the user specifies a value, use it exactly. If they specify a % range (e.g. '-60% range'), convert using: bins = ceil(log(1 - pct) / log(1 + bin_step/10000)). Example: -60% range at bin_step 100 → ceil(log(0.40)/log(1.01)) = 92 bins. Otherwise choose based on volatility: 35–69 standard, 100–350 for wide-range strategies. Max 1400 total."
+            description: "Number of bins below active bin. Follow screener prompt formula. Max 1400 total."
           },
           bins_above: {
             type: "number",
@@ -502,16 +484,9 @@ Returns: organic score, holder count, mcap, liquidity, audit flags (mint/freeze 
     type: "function",
     function: {
       name: "get_token_holders",
-      description: `Get holder distribution for a token by mint address.
-Fetches top 100 holders — use limit to control how many to display (default 20).
-Each holder includes: address, amount, % of supply, SOL balance, tags (Pool/AMM/etc), and funding info (who funded this wallet, amount, slot).
-is_pool=true means it's a liquidity pool address, not a real holder — filter these out when analyzing concentration.
-
-Also returns global_fees_sol — total priority/jito tips paid by ALL traders on this token (NOT Meteora LP fees).
-This is a key signal: low global_fees_sol means transactions are bundled or the token is a scam.
-HARD GATE: if global_fees_sol < config.screening.minTokenFeesSol (default 30), do NOT deploy.
-
-NOTE: Requires mint address. If you only have a symbol/name, call get_token_info first to resolve the mint.`,
+      description: `Get holder distribution and global_fees_sol for a token by mint address.
+global_fees_sol = total priority/jito tips paid by all traders — pass this to deploy_position as fees_sol.
+Requires mint address (call get_token_info first if you only have a symbol).`,
       parameters: {
         type: "object",
         properties: {
@@ -527,21 +502,9 @@ NOTE: Requires mint address. If you only have a symbol/name, call get_token_info
     type: "function",
     function: {
       name: "get_token_narrative",
-      description: `Get the narrative or story behind a token from Jupiter ChainInsight.
-Returns a plain-text description of what the token is about — its origin, theme, community, and activity.
-Use during token evaluation to understand if there is a real catalyst driving attention and volume.
-
-GOOD narrative signals (proceed with more confidence):
-- Specific origin story: tied to a real-world event, viral moment, person, animal, place, or cultural reference
-- Active community: mentions contests, donations, real-world actions, organized activities
-- Trending catalyst: references something currently viral on X/CT (KOL call, news event, meme wave)
-- Named entities: real identifiable subjects (a specific animal, person, project, game, etc.)
-
-BAD narrative signals (caution or skip):
-- Empty or null — no story at all
-- Pure hype/financial language only: "next 100x", "to the moon", "fair launch gem" with no substance
-- Completely generic: "community-driven token", "meme coin" with zero specific context
-- Copy-paste of another token's narrative`,
+      description: `Get the narrative/story behind a token from Jupiter ChainInsight.
+Use during screening to assess whether a real catalyst drives the token's volume and attention.
+Good: specific origin, real event, named entity. Bad: generic hype, no substance.`,
       parameters: {
         type: "object",
         properties: {

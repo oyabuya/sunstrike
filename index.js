@@ -376,7 +376,7 @@ RULES:
 Execute the required actions. Do NOT re-evaluate CLOSE/CLAIM — rules already applied. Just execute.
 CHART_SIGNAL requires your judgment — call get_position_pnl then decide.
 After executing, write a brief one-line result per position.
-      `, config.llm.maxSteps, [], "MANAGER", config.llm.managementModel, config.llm.maxTokens, {
+      `, config.llm.maxStepsManager, [], "MANAGER", config.llm.managementModel, config.llm.maxTokens, {
         onToolStart: async ({ name }) => { await liveMessage?.toolStart(name); },
         onToolFinish: async ({ name, result, success }) => { await liveMessage?.toolFinish(name, result, success); },
       });
@@ -664,7 +664,7 @@ STEPS:
 IMPORTANT:
 - Never write "unknown" for OKX. Use real values, omit missing fields, or write exactly "OKX: unavailable".
 - Keep the whole report compact and highly scannable for Telegram.
-      `, config.llm.maxSteps, [], "SCREENER", config.llm.screeningModel, config.llm.maxTokens, {
+      `, config.llm.maxStepsScreener, [], "SCREENER", config.llm.screeningModel, config.llm.maxTokens, {
         onToolStart: async ({ name }) => { await liveMessage?.toolStart(name); },
         onToolFinish: async ({ name, result, success }) => { await liveMessage?.toolFinish(name, result, success); },
       });
@@ -704,7 +704,7 @@ export function startCronJobs() {
 HEALTH CHECK
 
 Summarize the current portfolio health, total fees earned, and performance of all open positions. Recommend any high-level adjustments if needed.
-      `, config.llm.maxSteps, [], "MANAGER", config.llm.managementModel);
+      `, config.llm.maxStepsManager, [], "MANAGER", config.llm.managementModel);
     } catch (error) {
       log("cron_error", `Health check failed: ${error.message}`);
     } finally {
@@ -809,7 +809,7 @@ let cronStarted = false;
 let busy = false;
 const _telegramQueue = []; // queued messages received while agent was busy
 const sessionHistory = []; // persists conversation across REPL turns
-const MAX_HISTORY = 20;    // keep last 20 messages (10 exchanges)
+const MAX_HISTORY = 10;    // keep last 10 messages (5 exchanges) — saves ~500–1k tok per Telegram call
 let _ttyInterface = null;
 
 function appendHistory(userMsg, assistantMsg) {
@@ -1051,7 +1051,7 @@ Commands:
         console.log(`\nDeploying ${DEPLOY} SOL into ${pool.name}...\n`);
         const { content: reply } = await agentLoop(
           `Deploy ${DEPLOY} SOL into pool ${pool.pool} (${pool.name}). Call get_active_bin first then deploy_position. Report result.`,
-          config.llm.maxSteps,
+          config.llm.maxStepsScreener,
           [],
           "SCREENER",
           config.llm.screeningModel
@@ -1068,7 +1068,7 @@ Commands:
         console.log("\nAgent is picking and deploying...\n");
         const { content: reply } = await agentLoop(
           `get_top_candidates, pick the best one, get_active_bin, deploy_position with ${DEPLOY} SOL. Execute now, don't ask.`,
-          config.llm.maxSteps,
+          config.llm.maxStepsScreener,
           [],
           "SCREENER",
           config.llm.screeningModel
@@ -1248,7 +1248,7 @@ Focus on: hold duration, entry/exit timing, what win rates look like, whether sc
       await agentLoop(`
 STARTUP CHECK
 1. get_wallet_balance. 2. get_my_positions. ${startupStep3} 4. Report.
-      `, config.llm.maxSteps, [], "SCREENER", config.llm.screeningModel);
+      `, config.llm.maxStepsScreener, [], "SCREENER", config.llm.screeningModel);
     } catch (e) {
       log("startup_error", e.message);
     }
