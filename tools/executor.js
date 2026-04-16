@@ -413,6 +413,28 @@ async function runSafetyChecks(name, args) {
         }
       }
 
+      // Hard gate: only deploy into SOL-quoted pools — wallet holds SOL, not stablecoins.
+      // Pool data is already fetched below for the 0-position check; piggyback on that call.
+      // We check quote_mint from pool detail here to prevent non-SOL deploys (e.g. unc-USDC).
+      try {
+        const poolData = await getPoolDetail({ pool_address: args.pool_address });
+        const quoteMint = poolData?.quote?.mint;
+        const solMint   = config.tokens.SOL;
+        if (quoteMint && quoteMint !== solMint) {
+          // Check if wallet holds the quote token
+          const balance = await getWalletBalances();
+          const hasQuote = balance.tokens?.some(t => t.mint === quoteMint && t.amount > 0);
+          if (!hasQuote) {
+            return {
+              pass: false,
+              reason: `Deploy blocked: pool quote token is not SOL (mint: ${quoteMint.slice(0, 8)}…) and wallet holds 0 of that token. Only SOL-quoted pools are supported with a SOL-only wallet.`,
+            };
+          }
+        }
+      } catch {
+        // non-blocking — skip check if pool detail unavailable
+      }
+
       // Hard gate: global fees paid must meet minimum threshold (bundled/scam tokens have low fees)
       const minFeesSol = config.screening.minTokenFeesSol ?? 30;
       if (args.fees_sol != null && args.fees_sol < minFeesSol) {

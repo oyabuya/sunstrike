@@ -128,11 +128,15 @@ export async function discoverPools({
   page_size = 50,
 } = {}) {
   const s = config.screening;
+  // SOL mint — only deploy into SOL-quoted pools (wallet holds SOL, not stablecoins)
+  const SOL_MINT = config.tokens.SOL;
+
   const filters = [
     "base_token_has_critical_warnings=false",
     "quote_token_has_critical_warnings=false",
     "base_token_has_high_single_ownership=false",
     "pool_type=dlmm",
+    `quote_token_mint=${SOL_MINT}`,
     `base_token_market_cap>=${s.minMcap}`,
     `base_token_market_cap<=${s.maxMcap}`,
     `base_token_holders>=${s.minHolders}`,

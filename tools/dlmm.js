@@ -182,9 +182,11 @@ export async function deployPosition({
   const finalAmountY = amount_y ?? amount_sol ?? 0;
   const finalAmountX = amount_x ?? 0;
 
-  const totalYLamports = new BN(Math.floor(finalAmountY * 1e9));
-  // For X, we assume it's also 9 decimals for now, or we'd need to fetch mint decimals.
-  // Most Meteora pools base tokens are 6 or 9. To be safe, we should fetch.
+  // Fetch actual decimals for both tokens — never assume 9 (USDC=6, SOL=9, etc.)
+  const quoteMintInfo = await getConnection().getParsedAccountInfo(new PublicKey(pool.lbPair.tokenYMint));
+  const quoteDecimals = quoteMintInfo.value?.data?.parsed?.info?.decimals ?? 9;
+  const totalYLamports = new BN(Math.floor(finalAmountY * Math.pow(10, quoteDecimals)));
+
   let totalXLamports = new BN(0);
   if (finalAmountX > 0) {
     const mintInfo = await getConnection().getParsedAccountInfo(new PublicKey(pool.lbPair.tokenXMint));
