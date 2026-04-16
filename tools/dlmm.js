@@ -112,7 +112,9 @@ export async function deployPosition({
   const activeStrategy = strategy || config.strategy.strategy;
 
   const activeBinsBelow = bins_below ?? config.strategy.binsBelow;
-  const activeBinsAbove = bins_above ?? config.strategy.binsAbove ?? 10;
+  // Use config default if bins_above is 0 or not provided — LLM often passes 0 explicitly
+  // which ?? cannot override (0 is not null/undefined). Use || so 0 falls through to default.
+  const activeBinsAbove = bins_above || config.strategy.binsAbove || 10;
 
   if (isPoolOnCooldown(pool_address)) {
     log("deploy", `Pool ${pool_address.slice(0, 8)} is on cooldown — skipping`);
