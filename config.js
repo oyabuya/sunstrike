@@ -84,6 +84,7 @@ export const config = {
   strategy: {
     strategy:  u.strategy  ?? "bid_ask",
     binsBelow: u.binsBelow ?? 69,
+    binsAbove: u.binsAbove ?? 10,  // minimal upside buffer — prevents instant OOR on small pumps
   },
 
   // ─── Scheduling ─────────────────────────
