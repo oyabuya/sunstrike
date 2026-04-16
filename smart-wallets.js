@@ -211,6 +211,90 @@ async function _discoverViaGmgn(baseMint, poolName) {
 const _cache = new Map(); // address -> { positions, fetchedAt }
 const CACHE_TTL = 5 * 60 * 1000;
 
+/**
+ * Reverse tracking — scan ALL lp-type smart wallets and surface pools
+ * where multiple wallets are actively LP-ing.
+ *
+ * This is the inverse of checkSmartWalletsOnPool: instead of asking
+ * "are my smart wallets in THIS pool?", we ask "which pools are my
+ * smart wallets currently in?"
+ *
+ * Returns pools ranked by smart wallet concentration.
+ * minWallets=2 means at least 2 tracked wallets must be in the pool.
+ *
+ * @param {number} minWallets - Minimum smart wallets required in a pool (default 2)
+ * @returns {{ pools: Array, total_wallets_checked: number }}
+ */
+export async function getSmartWalletCandidatePools({ min_wallets = 2 } = {}) {
+  const { wallets: allWallets } = loadWallets();
+  const lpWallets = allWallets.filter((w) => !w.type || w.type === "lp");
+
+  if (lpWallets.length === 0) {
+    return { pools: [], total_wallets_checked: 0, signal: "No lp-type wallets tracked" };
+  }
+
+  const { getWalletPositions } = await import("./tools/dlmm.js");
+
+  // Fetch positions for all wallets in parallel (with cache)
+  const results = await Promise.all(
+    lpWallets.map(async (wallet) => {
+      try {
+        const cached = _cache.get(wallet.address);
+        if (cached && Date.now() - cached.fetchedAt < CACHE_TTL) {
+          return { wallet, positions: cached.positions };
+        }
+        const { positions } = await getWalletPositions({ wallet_address: wallet.address });
+        const pos = positions || [];
+        _cache.set(wallet.address, { positions: pos, fetchedAt: Date.now() });
+        return { wallet, positions: pos };
+      } catch {
+        return { wallet, positions: [] };
+      }
+    })
+  );
+
+  // Aggregate by pool
+  const poolMap = new Map(); // pool_address -> { wallets: [], pool_name, base_mint }
+  for (const { wallet, positions } of results) {
+    for (const pos of positions) {
+      if (!pos.pool) continue;
+      if (!poolMap.has(pos.pool)) {
+        poolMap.set(pos.pool, {
+          pool_address: pos.pool,
+          pool_name:    pos.pair_name || pos.pool_name || pos.pool.slice(0, 8),
+          base_mint:    pos.base_mint || null,
+          wallets:      [],
+        });
+      }
+      poolMap.get(pos.pool).wallets.push({
+        name:     wallet.name,
+        category: wallet.category,
+        address:  wallet.address,
+      });
+    }
+  }
+
+  // Filter by minWallets, sort by concentration desc
+  const qualifying = Array.from(poolMap.values())
+    .filter((p) => p.wallets.length >= min_wallets)
+    .sort((a, b) => b.wallets.length - a.wallets.length);
+
+  return {
+    pools: qualifying.map((p) => ({
+      pool_address:  p.pool_address,
+      pool_name:     p.pool_name,
+      base_mint:     p.base_mint,
+      wallet_count:  p.wallets.length,
+      wallets:       p.wallets.map((w) => w.name),
+      signal:        `${p.wallets.length} smart wallet(s) actively LP-ing here`,
+    })),
+    total_wallets_checked: lpWallets.length,
+    signal: qualifying.length > 0
+      ? `Found ${qualifying.length} pool(s) with ≥${min_wallets} smart wallets active`
+      : `No pools found with ≥${min_wallets} smart wallets — all tracked wallets idle or in different pools`,
+  };
+}
+
 export async function checkSmartWalletsOnPool({ pool_address }) {
   const { wallets: allWallets } = loadWallets();
   // Only check LP-type wallets — holder wallets don't have positions

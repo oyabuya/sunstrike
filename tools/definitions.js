@@ -464,6 +464,25 @@ If no smart wallets are present, rely on fundamentals (fees, volume, organic sco
   {
     type: "function",
     function: {
+      name: "get_smart_wallet_pools",
+      description: `Reverse smart wallet tracking — scan all tracked lp-type wallets and surface pools where multiple smart wallets are actively LP-ing.
+Use this when normal screening returns 0 or few candidates. If smart wallets cluster in a pool, that pool is worth evaluating even if it didn't appear in standard screening.
+Returns pools ranked by smart wallet concentration. Each result includes pool_address, pool_name, and which wallets are in it.`,
+      parameters: {
+        type: "object",
+        properties: {
+          min_wallets: {
+            type: "number",
+            description: "Minimum number of smart wallets required in a pool to surface it (default 2). Lower to 1 if no results found with 2."
+          }
+        }
+      }
+    }
+  },
+
+  {
+    type: "function",
+    function: {
       name: "get_token_info",
       description: `Get token data from Jupiter (organic score, holders, audit, price stats, mcap).
 Use this to research a token before deploying or when the user asks about a token.
