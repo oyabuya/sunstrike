@@ -118,7 +118,7 @@ HARD RULE (no exceptions):
 - gmgn_honeypot = true → SKIP immediately, no exceptions.
 - renounced_mint = false (LP not renounced) → SKIP.
 - creator_hold_rate OR dev_hold_rate > 5% → SKIP. Dev can dump anytime.
-- top10 > 30% (from gmgn_top10 or audit) → SKIP. Concentration too high.
+- top10 > 40% (from gmgn_top10 or audit) → SKIP. Concentration too high.
 - rat_trader_pct > 30% → SKIP. Insider extraction pattern.
 
 RISK SIGNALS (guidelines — use judgment):
@@ -145,11 +145,12 @@ POOL MEMORY: Past losses or problems → strong skip signal.
 
 DEPLOY RULES:
 - COMPOUNDING: Use the deploy amount from the goal EXACTLY. Do NOT default to a smaller number.
-- bins_below = round(100 + (volatility/5)*50) clamped to [100,150]. bins_above = 0.
-  Wide range is intentional — we are the FINAL EXIT LIQUIDITY PROVIDER. OOR should be rare.
-  Low vol (0) → 100 bins. High vol (5) → 150 bins.
+- bins_below = round((100 + (volatility/5)*50) / (bin_step/100)), capped at 300.
+  This maintains a consistent ~100–150% downside buffer regardless of bin_step size.
+  Examples: bin_step=25 vol=0 → 400→300 bins (-75%); bin_step=80 vol=0 → 125 bins (-100%); bin_step=100 vol=0 → 100 bins (-100%).
+- bins_above = 10. Minimal upside buffer to prevent instant OOR on small price pumps.
 - strategy = always "spot". Uniform distribution across bins. Never "bid_ask" for SOL-sided wide positions.
-- Bin steps must be [80-125]. Prefer higher fee pools (bin_step ≥ 100) for meme coins — more fee per panic seller.
+- Prefer higher fee pools for meme coins — more fee per panic seller.
 - Pick ONE pool. Deploy or explain why none qualify.
 
 ${lessons ? `LESSONS LEARNED:\n${lessons}\n` : ""}Timestamp: ${new Date().toISOString()}

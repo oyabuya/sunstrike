@@ -5,6 +5,27 @@ import { log } from "../logger.js";
 import { isBaseMintOnCooldown, isPoolOnCooldown } from "../pool-memory.js";
 
 const FETCH_TIMEOUT_MS = 15_000;
+
+// ─── Wash-trading session cache ──────────────────────────────────────────────
+// Mints confirmed as wash-trading by OKX are cached for 6h.
+// On subsequent cycles they are filtered BEFORE OKX enrichment, saving API calls.
+const _washFlaggedMints = new Map(); // mint → flaggedAtMs
+const WASH_FLAG_TTL_MS  = 6 * 60 * 60 * 1_000; // 6 hours
+
+function isWashCached(mint) {
+  if (!mint) return false;
+  const ts = _washFlaggedMints.get(mint);
+  if (!ts) return false;
+  if (Date.now() - ts > WASH_FLAG_TTL_MS) {
+    _washFlaggedMints.delete(mint);
+    return false;
+  }
+  return true;
+}
+
+function markWashFlagged(mint) {
+  if (mint) _washFlaggedMints.set(mint, Date.now());
+}
 async function ftch(url, opts = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
@@ -155,6 +176,18 @@ export async function discoverPools({
     }
     return true;
   });
+
+  // Wash-trading cache — skip mints already confirmed as wash-trading (OKX) within 6h
+  const beforeWashCache = pools.length;
+  pools = pools.filter((p) => {
+    if (isWashCached(p.base?.mint)) {
+      log("screening", `Wash-cache: skipped ${p.name} (flagged within 6h)`);
+      return false;
+    }
+    return true;
+  });
+  if (pools.length < beforeWashCache)
+    log("screening", `Wash-cache filtered ${beforeWashCache - pools.length} pool(s) — OKX call saved`);
 
   // Tematic keyword blacklist — political/celebrity/justice coins (EvilPanda)
   const beforeTematic = pools.length;
@@ -412,9 +445,11 @@ export async function getTopCandidates({ limit = 10 } = {}) {
       }
     }
     // Wash trading hard filter — fake volume = misleading fee yield
+    // Flagged mints are cached for 6h so future cycles skip OKX enrichment entirely.
     eligible.splice(0, eligible.length, ...eligible.filter((p) => {
       if (p.is_wash) {
         log("screening", `Risk filter: dropped ${p.name} — wash trading flagged`);
+        markWashFlagged(p.base?.mint);
         pushFilteredReason(filteredOut, p, "wash trading flagged");
         return false;
       }
