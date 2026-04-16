@@ -161,6 +161,7 @@ export async function getAdvancedInfo(tokenAddress, chainIndex = CHAIN_SOLANA) {
     low_liquidity:        tags.includes("lowLiquidity"),
     dex_boost:            tags.includes("dexBoost"),
     dex_screener_paid:    tags.includes("dexScreenerPaid") || tags.includes("dsPaid"),
+    is_cto:               tags.includes("dexScreenerTokenCommunityTakeOver"),
   };
   return cacheSet(cacheKey, result);
 }

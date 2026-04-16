@@ -413,6 +413,15 @@ async function runSafetyChecks(name, args) {
         }
       }
 
+      // Hard gate: global fees paid must meet minimum threshold (bundled/scam tokens have low fees)
+      const minFeesSol = config.screening.minTokenFeesSol ?? 30;
+      if (args.fees_sol != null && args.fees_sol < minFeesSol) {
+        return {
+          pass: false,
+          reason: `Deploy blocked: global_fees_sol ${args.fees_sol} SOL is below minimum (${minFeesSol} SOL). Token has insufficient on-chain fee activity — likely bundled or scam.`,
+        };
+      }
+
       // Warn (but don't block) if pool has 0 open positions — binArrays may be uninitialized.
       // The definitive check is done on-chain inside deployPosition() in dlmm.js.
       try {

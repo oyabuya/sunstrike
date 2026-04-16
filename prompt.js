@@ -151,6 +151,7 @@ DEPLOY RULES:
 - bins_above = 10. Minimal upside buffer to prevent instant OOR on small price pumps.
 - strategy = always "spot". Uniform distribution across bins. Never "bid_ask" for SOL-sided wide positions.
 - Prefer higher fee pools for meme coins — more fee per panic seller.
+- Always pass fees_sol (= global_fees_sol from get_token_holders) when calling deploy_position. The executor enforces the minimum — deploy will be blocked in code if below threshold.
 - Pick ONE pool. Deploy or explain why none qualify.
 
 ${lessons ? `LESSONS LEARNED:\n${lessons}\n` : ""}Timestamp: ${new Date().toISOString()}

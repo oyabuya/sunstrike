@@ -427,6 +427,7 @@ export async function getTopCandidates({ limit = 10 } = {}) {
         eligible[i].dev_sold_all    = adv.dev_sold_all;
         eligible[i].dex_boost       = adv.dex_boost;
         eligible[i].dex_screener_paid = adv.dex_screener_paid;
+        if (adv.is_cto != null) eligible[i].is_cto = adv.is_cto;
         if (adv.creator && !eligible[i].dev) eligible[i].dev = adv.creator;
       }
       if (risk) {
@@ -451,6 +452,16 @@ export async function getTopCandidates({ limit = 10 } = {}) {
         log("screening", `Risk filter: dropped ${p.name} — wash trading flagged`);
         markWashFlagged(p.base?.mint);
         pushFilteredReason(filteredOut, p, "wash trading flagged");
+        return false;
+      }
+      return true;
+    }));
+
+    // CTO filter via OKX tags — community takeover = new devs collect fees while dumping
+    eligible.splice(0, eligible.length, ...eligible.filter((p) => {
+      if (p.is_cto) {
+        log("screening", `OKX CTO filter: dropped ${p.name} — dexScreenerTokenCommunityTakeOver tag`);
+        pushFilteredReason(filteredOut, p, "community takeover (OKX tag)");
         return false;
       }
       return true;
