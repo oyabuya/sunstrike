@@ -128,7 +128,7 @@ export async function discoverPools({
   page_size = 50,
 } = {}) {
   const s = config.screening;
-  // SOL mint — only deploy into SOL-quoted pools (wallet holds SOL, not stablecoins)
+  // SOL mint — used for post-filter (not API query — API may not support quote_token_mint parameter)
   const SOL_MINT = config.tokens.SOL;
 
   const filters = [
@@ -136,7 +136,6 @@ export async function discoverPools({
     "quote_token_has_critical_warnings=false",
     "base_token_has_high_single_ownership=false",
     "pool_type=dlmm",
-    `quote_token_mint=${SOL_MINT}`,
     `base_token_market_cap>=${s.minMcap}`,
     `base_token_market_cap<=${s.maxMcap}`,
     `base_token_holders>=${s.minHolders}`,
@@ -180,6 +179,19 @@ export async function discoverPools({
     }
     return true;
   });
+
+  // SOL-quote filter — only keep pools where quote token is SOL (wallet holds SOL only)
+  // Done as post-filter (not API query) because quote_token_mint is not a supported API param.
+  const beforeSolFilter = pools.length;
+  pools = pools.filter((p) => {
+    if (p.quote?.mint && p.quote.mint !== SOL_MINT) {
+      log("screening", `SOL-filter: dropped ${p.name} — quote token is not SOL (${p.quote.mint?.slice(0,8)})`);
+      return false;
+    }
+    return true;
+  });
+  if (pools.length < beforeSolFilter)
+    log("screening", `SOL-filter removed ${beforeSolFilter - pools.length} non-SOL pool(s)`);
 
   // Wash-trading cache — skip mints already confirmed as wash-trading (OKX) within 6h
   const beforeWashCache = pools.length;

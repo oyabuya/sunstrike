@@ -141,10 +141,12 @@ SUPERTREND SIGNAL (EvilPanda entry timing — 15m chart):
 - supertrend=down → price BELOW SuperTrend = downtrend already started = lower conviction, needs strong other signals
 - No ST data      → ignore; data may be unavailable for very new tokens
 
-SMART WALLET REVERSE TRACKING:
-- Call get_smart_wallet_pools when get_top_candidates returns 0 or few candidates.
-- Pools where ≥2 smart wallets are actively LP-ing are high-conviction candidates — evaluate them via get_pool_detail + get_token_holders before deploying.
-- If get_smart_wallet_pools also returns nothing, only then report no candidates.
+SMART WALLET REVERSE TRACKING (MANDATORY):
+- When get_top_candidates returns 0 candidates, you MUST call get_smart_wallet_pools before reporting no candidates.
+- Try min_wallets=2 first. If empty, retry with min_wallets=1.
+- Pools returned by get_smart_wallet_pools are high-conviction — smart LPers with 80%+ win rate are already in them.
+- Evaluate via get_pool_detail + get_token_holders + check hard rules, then deploy if qualified.
+- Only after BOTH get_top_candidates AND get_smart_wallet_pools return nothing → report no candidates.
 
 POOL MEMORY: Past losses or problems → strong skip signal.
 
