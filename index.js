@@ -67,6 +67,44 @@ const TRAILING_PEAK_CONFIRM_TOLERANCE = 0.85;
 const TRAILING_DROP_CONFIRM_DELAY_MS = 15_000;
 const TRAILING_DROP_CONFIRM_TOLERANCE_PCT = 1.0;
 
+function computeAdaptiveTrailingDropPct(position, tracked) {
+  const fee = Number(position?.fee_per_tvl_24h ?? tracked?.initial_fee_tvl_24h ?? tracked?.fee_tvl_ratio);
+  const base = config.management.trailingDropPct;
+  if (!Number.isFinite(fee)) return base;
+  if (fee >= (config.management.highYieldTrailingFeePerTvl24h ?? 20)) {
+    return Math.max(base ?? 0, config.management.highYieldTrailingDropPct ?? 2.0);
+  }
+  return base;
+}
+
+function computeAdaptiveOorWaitMinutes(position, tracked) {
+  const fee = Number(position?.fee_per_tvl_24h ?? tracked?.initial_fee_tvl_24h ?? tracked?.fee_tvl_ratio);
+  const base = config.management.outOfRangeWaitMinutes;
+  if (!Number.isFinite(fee)) return base;
+  if (fee >= (config.management.highYieldOorFeePerTvl24h ?? 15)) {
+    return Math.max(base ?? 0, config.management.highYieldOorWaitMinutes ?? 90);
+  }
+  return base;
+}
+
+function computeAdaptiveMinFeePerTvl24h(position, tracked) {
+  const base = config.management.minFeePerTvl24h;
+  if (base == null) return null;
+  const volume1h = Number(
+    position?.volume_usd_1h ??
+    position?.volume_1h ??
+    position?.volume_window_1h ??
+    position?.volume_window ??
+    tracked?.volume_window_1h ??
+    tracked?.volume_window_at_deploy
+  );
+  if (!Number.isFinite(volume1h)) return base;
+  if (volume1h >= (config.management.highVolumeFeeThresholdUsdPerHour ?? 20_000)) {
+    return Math.min(base, config.management.highVolumeMinFeePerTvl24h ?? 5);
+  }
+  return base;
+}
+
 /** Strip <think>...</think> reasoning blocks that some models leak into output */
 function stripThink(text) {
   if (!text) return text;
@@ -101,7 +139,7 @@ function schedulePeakConfirmation(positionAddress) {
   _peakConfirmTimers.set(positionAddress, timer);
 }
 
-function scheduleTrailingDropConfirmation(positionAddress) {
+function scheduleTrailingDropConfirmation(positionAddress, trailingDropPct) {
   if (!positionAddress || _trailingDropConfirmTimers.has(positionAddress)) return;
 
   const timer = setTimeout(async () => {
@@ -112,7 +150,7 @@ function scheduleTrailingDropConfirmation(positionAddress) {
       const resolved = resolvePendingTrailingDrop(
         positionAddress,
         position?.pnl_pct ?? null,
-        config.management.trailingDropPct,
+        trailingDropPct ?? config.management.trailingDropPct,
         TRAILING_DROP_CONFIRM_TOLERANCE_PCT,
       );
       if (resolved?.confirmed) {
@@ -221,8 +259,9 @@ export async function runManagementCycle({ silent = false } = {}) {
       const exit = updatePnlAndCheckExits(p.position, p, config.management);
       if (exit) {
         if (exit.action === "TRAILING_TP" && exit.needs_confirmation) {
-          if (queueTrailingDropConfirmation(p.position, exit.peak_pnl_pct, exit.current_pnl_pct, config.management.trailingDropPct)) {
-            scheduleTrailingDropConfirmation(p.position);
+          const trailingDropPctUsed = exit.trailing_drop_pct_used ?? computeAdaptiveTrailingDropPct(p, getTrackedPosition(p.position));
+          if (queueTrailingDropConfirmation(p.position, exit.peak_pnl_pct, exit.current_pnl_pct, trailingDropPctUsed)) {
+            scheduleTrailingDropConfirmation(p.position, trailingDropPctUsed);
           }
           continue;
         }
@@ -277,18 +316,21 @@ export async function runManagementCycle({ silent = false } = {}) {
         continue;
       }
       // Rule 4: stale above range
+      const adaptiveOorWaitMinutes = computeAdaptiveOorWaitMinutes(p, tracked);
       if (p.active_bin != null && p.upper_bin != null &&
           p.active_bin > p.upper_bin &&
-          (p.minutes_out_of_range ?? 0) >= config.management.outOfRangeWaitMinutes) {
+          (p.minutes_out_of_range ?? 0) >= adaptiveOorWaitMinutes) {
         actionMap.set(p.position, { action: "CLOSE", rule: 4, reason: "OOR" });
         continue;
       }
       // Rule 5: fee yield too low
       // PnL gate: skip if position is at a loss — hold for recovery.
       // Never close a losing position due to low yield; stop loss handles exits at threshold.
+      const adaptiveMinFeePerTvl24h = computeAdaptiveMinFeePerTvl24h(p, tracked);
       if (!pnlSuspect && p.fee_per_tvl_24h != null &&
-          p.fee_per_tvl_24h < config.management.minFeePerTvl24h &&
-          (p.age_minutes ?? 0) >= 60 &&
+          adaptiveMinFeePerTvl24h != null &&
+          p.fee_per_tvl_24h < adaptiveMinFeePerTvl24h &&
+          (p.age_minutes ?? 0) >= (config.management.minAgeBeforeYieldCheck ?? 60) &&
           (p.pnl_pct == null || p.pnl_pct >= 0)) {
         actionMap.set(p.position, { action: "CLOSE", rule: 5, reason: "low yield" });
         continue;
@@ -405,7 +447,9 @@ After executing, write a brief one-line result per position.
         else sendMessage(`🔄 Management Cycle\n\n${stripThink(mgmtReport)}`).catch(() => { });
       }
       for (const p of positions) {
-        if (!p.in_range && p.minutes_out_of_range >= config.management.outOfRangeWaitMinutes) {
+        const tracked = getTrackedPosition(p.position);
+        const adaptiveOorWaitMinutes = computeAdaptiveOorWaitMinutes(p, tracked);
+        if (!p.in_range && p.minutes_out_of_range >= adaptiveOorWaitMinutes) {
           notifyOutOfRange({ pair: p.pair, minutesOOR: p.minutes_out_of_range }).catch(() => { });
         }
       }
@@ -612,7 +656,9 @@ STEPS:
    - amount_y: ${deployAmount}  ← REQUIRED, always pass this exact value
    - amount_x: 0
    - strategy: "spot"  ← always spot, no exceptions (wide range = uniform distribution)
-   - bins_below: round(100 + (volatility/5)*50) clamped to [100,150]
+   - bins_below_base: round(100 + (volatility/5)*50) clamped to [100,150]
+   - if bin_step >= 50: bins_below = round(bins_below_base * 1.2)
+     else: bins_below = bins_below_base
        volatility 0 → 100 bins | volatility 2.5 → 125 bins | volatility 5 → 150 bins
    - bins_above: 0
    - active_bin: (use pre-fetched value above)
@@ -737,8 +783,10 @@ Summarize the current portfolio health, total fees earned, and performance of al
         const exit = updatePnlAndCheckExits(p.position, p, config.management);
         if (exit) {
           if (exit.action === "TRAILING_TP" && exit.needs_confirmation) {
-            if (queueTrailingDropConfirmation(p.position, exit.peak_pnl_pct, exit.current_pnl_pct, config.management.trailingDropPct)) {
-              scheduleTrailingDropConfirmation(p.position);
+            const tracked = getTrackedPosition(p.position);
+            const trailingDropPctUsed = exit.trailing_drop_pct_used ?? computeAdaptiveTrailingDropPct(p, tracked);
+            if (queueTrailingDropConfirmation(p.position, exit.peak_pnl_pct, exit.current_pnl_pct, trailingDropPctUsed)) {
+              scheduleTrailingDropConfirmation(p.position, trailingDropPctUsed);
             }
             continue;
           }

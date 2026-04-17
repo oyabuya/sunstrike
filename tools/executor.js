@@ -35,6 +35,14 @@ import { notifyDeploy, notifyClose, notifySwap } from "../telegram.js";
 let _cronRestarter = null;
 export function registerCronRestarter(fn) { _cronRestarter = fn; }
 
+function computeAdaptiveManagementInterval(volatility) {
+  const v = Number(volatility);
+  if (!Number.isFinite(v)) return null;
+  if (v >= (config.schedule.highVolatilityCutoff ?? 5)) return config.schedule.highVolManagementIntervalMin ?? 5;
+  if (v >= (config.schedule.midVolatilityCutoff ?? 2)) return config.schedule.midVolManagementIntervalMin ?? 8;
+  return config.schedule.lowVolManagementIntervalMin ?? 15;
+}
+
 // Map tool names to implementations
 const toolMap = {
   discover_pools: discoverPools,
@@ -174,12 +182,24 @@ const toolMap = {
       // schedule
       managementIntervalMin: ["schedule", "managementIntervalMin"],
       screeningIntervalMin: ["schedule", "screeningIntervalMin"],
+      highVolatilityCutoff: ["schedule", "highVolatilityCutoff"],
+      midVolatilityCutoff: ["schedule", "midVolatilityCutoff"],
+      highVolManagementIntervalMin: ["schedule", "highVolManagementIntervalMin"],
+      midVolManagementIntervalMin: ["schedule", "midVolManagementIntervalMin"],
+      lowVolManagementIntervalMin: ["schedule", "lowVolManagementIntervalMin"],
       // models
       managementModel: ["llm", "managementModel"],
       screeningModel: ["llm", "screeningModel"],
       generalModel: ["llm", "generalModel"],
       // strategy
       binsBelow: ["strategy", "binsBelow"],
+      // adaptive management
+      highYieldTrailingFeePerTvl24h: ["management", "highYieldTrailingFeePerTvl24h"],
+      highYieldTrailingDropPct: ["management", "highYieldTrailingDropPct"],
+      highYieldOorFeePerTvl24h: ["management", "highYieldOorFeePerTvl24h"],
+      highYieldOorWaitMinutes: ["management", "highYieldOorWaitMinutes"],
+      highVolumeFeeThresholdUsdPerHour: ["management", "highVolumeFeeThresholdUsdPerHour"],
+      highVolumeMinFeePerTvl24h: ["management", "highVolumeMinFeePerTvl24h"],
     };
 
     const applied = {};
@@ -301,6 +321,13 @@ export async function executeTool(name, args) {
         notifySwap({ inputSymbol: args.input_mint?.slice(0, 8), outputSymbol: args.output_mint === "So11111111111111111111111111111111111111112" || args.output_mint === "SOL" ? "SOL" : args.output_mint?.slice(0, 8), amountIn: result.amount_in, amountOut: result.amount_out, tx: result.tx }).catch(() => {});
       } else if (name === "deploy_position") {
         notifyDeploy({ pair: result.pool_name || args.pool_name || args.pool_address?.slice(0, 8), amountSol: args.amount_y ?? args.amount_sol ?? 0, position: result.position, tx: result.txs?.[0] ?? result.tx, priceRange: result.price_range, binStep: result.bin_step, baseFee: result.base_fee }).catch(() => {});
+        const adaptiveInterval = computeAdaptiveManagementInterval(result?.volatility ?? args?.volatility);
+        if (adaptiveInterval != null && adaptiveInterval !== config.schedule.managementIntervalMin) {
+          toolMap.update_config({
+            changes: { managementIntervalMin: adaptiveInterval },
+            reason: `Auto interval by volatility=${result?.volatility ?? args?.volatility} after deploy`,
+          });
+        }
         // Auto-discover smart wallets from this pool — background, never blocks
         const _discoverPool = result.pool || args.pool_address;
         const _discoverName = result.pool_name || args.pool_name || "";

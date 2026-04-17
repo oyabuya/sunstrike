@@ -105,6 +105,7 @@ export async function deployPosition({
   base_fee,
   volatility,
   fee_tvl_ratio,
+  volume_window,
   organic_score,
   initial_value_usd,
 }) {
@@ -315,6 +316,7 @@ export async function deployPosition({
       bin_step,
       volatility,
       fee_tvl_ratio,
+      volume_window_at_deploy: volume_window,
       organic_score,
       amount_sol: finalAmountY,
       amount_x: finalAmountX,
@@ -340,6 +342,7 @@ export async function deployPosition({
       price_range: { min: minPrice, max: maxPrice },
       bin_step: actualBinStep,
       base_fee: actualBaseFee,
+      volatility: volatility ?? null,
       strategy: activeStrategy,
       wide_range: isWideRange,
       amount_x: finalAmountX,
@@ -642,6 +645,17 @@ export async function getMyPositions({ force = false, silent = false } = {}) {
             : null,
           fee_per_tvl_24h:    binData
             ? Math.round(parseFloat(binData.feePerTvl24h || 0) * 100) / 100
+            : null,
+          volume_usd_1h:      binData
+            ? Math.round(parseFloat(
+                binData.volume1h ??
+                binData.volume_1h ??
+                binData.tradeVolume1h ??
+                binData.trade_volume_1h ??
+                binData.volumeUsd1h ??
+                binData.volume_usd_1h ??
+                0
+              ) * 100) / 100
             : null,
           age_minutes:        binData?.createdAt ? Math.floor((Date.now() - binData.createdAt * 1000) / 60000) : ageFromState,
           minutes_out_of_range: minutesOutOfRange(positionAddress),

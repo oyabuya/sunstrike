@@ -75,6 +75,12 @@ export const config = {
     trailingTakeProfit:    u.trailingTakeProfit    ?? true,
     trailingTriggerPct:    u.trailingTriggerPct    ?? 3,    // activate trailing at X% PnL
     trailingDropPct:       u.trailingDropPct       ?? 1.5,  // close when drops X% from peak
+    highYieldTrailingFeePerTvl24h: u.highYieldTrailingFeePerTvl24h ?? 20,
+    highYieldTrailingDropPct:      u.highYieldTrailingDropPct      ?? 2.0,
+    highYieldOorFeePerTvl24h:      u.highYieldOorFeePerTvl24h      ?? 15,
+    highYieldOorWaitMinutes:       u.highYieldOorWaitMinutes       ?? 90,
+    highVolumeFeeThresholdUsdPerHour: u.highVolumeFeeThresholdUsdPerHour ?? 20_000,
+    highVolumeMinFeePerTvl24h:        u.highVolumeMinFeePerTvl24h        ?? 5,
     pnlSanityMaxDiffPct:   u.pnlSanityMaxDiffPct   ?? 5,    // max allowed diff between reported and derived pnl % before ignoring a tick
     // SOL mode — positions, PnL, and balances reported in SOL instead of USD
     solMode:               u.solMode               ?? false,
@@ -92,6 +98,11 @@ export const config = {
     managementIntervalMin:  u.managementIntervalMin  ?? 15,
     screeningIntervalMin:   u.screeningIntervalMin   ?? 45,
     healthCheckIntervalMin: u.healthCheckIntervalMin ?? 60,
+    highVolatilityCutoff:   u.highVolatilityCutoff   ?? 5,
+    midVolatilityCutoff:    u.midVolatilityCutoff    ?? 2,
+    highVolManagementIntervalMin: u.highVolManagementIntervalMin ?? 5,
+    midVolManagementIntervalMin:  u.midVolManagementIntervalMin  ?? 8,
+    lowVolManagementIntervalMin:  u.lowVolManagementIntervalMin  ?? 15,
   },
 
   // ─── LLM Settings ──────────────────────

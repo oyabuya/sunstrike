@@ -65,6 +65,7 @@ export function trackPosition({
   bin_step,
   volatility,
   fee_tvl_ratio,
+  volume_window_at_deploy,
   organic_score,
   initial_value_usd,
   signal_snapshot = null,
@@ -83,6 +84,7 @@ export function trackPosition({
     volatility,
     fee_tvl_ratio,
     initial_fee_tvl_24h: fee_tvl_ratio,
+    volume_window_at_deploy: volume_window_at_deploy ?? null,
     organic_score,
     initial_value_usd,
     signal_snapshot: signal_snapshot || null,
@@ -384,6 +386,25 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
   const state = load();
   const pos = state.positions[position_address];
   if (!pos || pos.closed) return null;
+  const toNumOrNull = (v) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  };
+  const currentFeeTvl = toNumOrNull(fee_per_tvl_24h);
+  const deployFeeTvl = toNumOrNull(pos.initial_fee_tvl_24h ?? pos.fee_tvl_ratio);
+  const effectiveFeeTvl = currentFeeTvl ?? deployFeeTvl;
+  const baseTrailingDropPct = mgmtConfig.trailingDropPct;
+  const highYieldTrailingThreshold = mgmtConfig.highYieldTrailingFeePerTvl24h ?? 20;
+  const highYieldTrailingDropPct = mgmtConfig.highYieldTrailingDropPct ?? 2.0;
+  const trailingDropPctToUse = effectiveFeeTvl != null && effectiveFeeTvl >= highYieldTrailingThreshold
+    ? Math.max(baseTrailingDropPct ?? 0, highYieldTrailingDropPct)
+    : baseTrailingDropPct;
+  const baseOorWaitMinutes = mgmtConfig.outOfRangeWaitMinutes;
+  const highYieldOorThreshold = mgmtConfig.highYieldOorFeePerTvl24h ?? 15;
+  const highYieldOorWaitMinutes = mgmtConfig.highYieldOorWaitMinutes ?? 90;
+  const outOfRangeWaitMinutesToUse = effectiveFeeTvl != null && effectiveFeeTvl >= highYieldOorThreshold
+    ? Math.max(baseOorWaitMinutes ?? 0, highYieldOorWaitMinutes)
+    : baseOorWaitMinutes;
 
   if (pos.confirmed_trailing_exit_until) {
     if (new Date(pos.confirmed_trailing_exit_until).getTime() > Date.now() && pos.confirmed_trailing_exit_reason) {
@@ -430,14 +451,15 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
   // ── Trailing TP ────────────────────────────────────────────────
   if (!pnl_pct_suspicious && pos.trailing_active) {
     const dropFromPeak = pos.peak_pnl_pct - currentPnlPct;
-    if (dropFromPeak >= mgmtConfig.trailingDropPct) {
+    if (trailingDropPctToUse != null && dropFromPeak >= trailingDropPctToUse) {
       return {
         action: "TRAILING_TP",
-        reason: `Trailing TP: peak ${pos.peak_pnl_pct.toFixed(2)}% → current ${currentPnlPct.toFixed(2)}% (dropped ${dropFromPeak.toFixed(2)}% >= ${mgmtConfig.trailingDropPct}%)`,
+        reason: `Trailing TP: peak ${pos.peak_pnl_pct.toFixed(2)}% → current ${currentPnlPct.toFixed(2)}% (dropped ${dropFromPeak.toFixed(2)}% >= ${trailingDropPctToUse}%)`,
         needs_confirmation: true,
         peak_pnl_pct: pos.peak_pnl_pct,
         current_pnl_pct: currentPnlPct,
         drop_from_peak_pct: dropFromPeak,
+        trailing_drop_pct_used: trailingDropPctToUse,
       };
     }
   }
@@ -449,7 +471,7 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
   //            Closing now = worst possible exit timing. Wait for the green candle.
   if (pos.out_of_range_since) {
     const minutesOOR = Math.floor((Date.now() - new Date(pos.out_of_range_since).getTime()) / 60000);
-    if (minutesOOR >= mgmtConfig.outOfRangeWaitMinutes) {
+    if (outOfRangeWaitMinutesToUse != null && minutesOOR >= outOfRangeWaitMinutesToUse) {
       const activeBin = positionData.active_bin ?? positionData.active_bin_id ?? null;
       const upperBin  = positionData.upper_bin  ?? positionData.max_bin_id    ?? null;
       const lowerBin  = positionData.lower_bin  ?? positionData.min_bin_id    ?? null;
@@ -458,7 +480,7 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
       if (activeBin == null || upperBin == null) {
         return {
           action: "OUT_OF_RANGE",
-          reason: `Out of range for ${minutesOOR}m (limit: ${mgmtConfig.outOfRangeWaitMinutes}m)`,
+          reason: `Out of range for ${minutesOOR}m (limit: ${outOfRangeWaitMinutesToUse}m)`,
         };
       }
 
@@ -466,7 +488,7 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
       if (activeBin > upperBin) {
         return {
           action: "OUT_OF_RANGE",
-          reason: `Out of range for ${minutesOOR}m (limit: ${mgmtConfig.outOfRangeWaitMinutes}m) — price above range`,
+          reason: `Out of range for ${minutesOOR}m (limit: ${outOfRangeWaitMinutesToUse}m) — price above range`,
         };
       }
 
@@ -485,16 +507,33 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
   const { age_minutes } = positionData;
   const minAgeForYieldCheck = mgmtConfig.minAgeBeforeYieldCheck ?? 60;
   const yieldExitAllowed = !pnl_pct_suspicious && (currentPnlPct == null || currentPnlPct >= 0);
+  const highVolumeThreshold = mgmtConfig.highVolumeFeeThresholdUsdPerHour ?? 20_000;
+  const highVolumeMinFee = mgmtConfig.highVolumeMinFeePerTvl24h ?? 5;
+  const volume1h = [
+    positionData.volume_usd_1h,
+    positionData.volume_1h,
+    positionData.volume_window_1h,
+    positionData.volume_window,
+    pos.volume_window_1h,
+    pos.volume_window_at_deploy,
+  ].map(toNumOrNull).find((v) => v != null) ?? null;
+  const minFeePerTvlToUse = (() => {
+    if (mgmtConfig.minFeePerTvl24h == null) return null;
+    if (volume1h != null && volume1h >= highVolumeThreshold) {
+      return Math.min(mgmtConfig.minFeePerTvl24h, highVolumeMinFee);
+    }
+    return mgmtConfig.minFeePerTvl24h;
+  })();
   if (
     yieldExitAllowed &&
     fee_per_tvl_24h != null &&
-    mgmtConfig.minFeePerTvl24h != null &&
-    fee_per_tvl_24h < mgmtConfig.minFeePerTvl24h &&
+    minFeePerTvlToUse != null &&
+    fee_per_tvl_24h < minFeePerTvlToUse &&
     (age_minutes == null || age_minutes >= minAgeForYieldCheck)
   ) {
     return {
       action: "LOW_YIELD",
-      reason: `Low yield: fee/TVL ${fee_per_tvl_24h.toFixed(2)}% < min ${mgmtConfig.minFeePerTvl24h}% (age: ${age_minutes ?? "?"}m)`,
+      reason: `Low yield: fee/TVL ${fee_per_tvl_24h.toFixed(2)}% < min ${minFeePerTvlToUse}% (age: ${age_minutes ?? "?"}m)`,
     };
   }
 
