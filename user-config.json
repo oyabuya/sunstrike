@@ -1,0 +1,1 @@
+{\n  "strategy": "Capital Efficiency",\n  "parameters": {\n    "maxCompounding": true,\n    "rebalanceFrequency": "daily",\n    "claimHandling": {\n      "enabled": true,\n      "claimFrequency": "afterEveryRebalance"\n    }\n  }\n}
