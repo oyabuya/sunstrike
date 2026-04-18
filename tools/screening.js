@@ -217,19 +217,13 @@ export async function discoverPools({
   if (pools.length < beforeTematic)
     log("screening", `Tematic filter removed ${beforeTematic - pools.length} pool(s)`);
 
-  // CTO filter — Community Takeover coins (EvilPanda: avoid always)
+  // CTO enrichment — Community Takeover coins (soft flag for LLM evaluation)
   const ctoMints = await getCtoMints();
-  if (ctoMints.size > 0) {
-    const beforeCto = pools.length;
-    pools = pools.filter((p) => {
-      if (p.base?.mint && ctoMints.has(p.base.mint)) {
-        log("screening", `CTO filter: dropped ${p.base?.symbol} — community takeover coin`);
-        return false;
-      }
-      return true;
-    });
-    if (pools.length < beforeCto)
-      log("screening", `CTO filter removed ${beforeCto - pools.length} pool(s)`);
+  for (let i = 0; i < pools.length; i++) {
+    if (pools[i].base?.mint && ctoMints.has(pools[i].base.mint)) {
+      pools[i].cto_flagged_dexscreener = true;
+      log("screening", `CTO detected on ${pools[i].name} — soft flag for LLM (not rejected)`);
+    }
   }
 
   const filtered = condensed.length - pools.length;
@@ -385,6 +379,25 @@ export async function getTopCandidates({ limit = 10 } = {}) {
     }));
   }
 
+    // Bundler soft filter: < 40% GREEN, 40-60% YELLOW, > 60% RED (hard skip)
+  if (eligible.length > 0 && process.env.GMGN_API_KEY) {
+    const maxBundlerSoft = config.screening.maxBundlePct ?? 40;
+    const maxBundlerHard = 65;
+    
+    for (let i = eligible.length - 1; i >= 0; i--) {
+      const bundler = eligible[i].gmgn_bundler_pct ?? 0;
+      
+      if (bundler > maxBundlerHard) {
+        log("screening", `Bundler hard filter: dropped ${eligible[i].name} — ${bundler}% > ${maxBundlerHard}%`);
+        pushFilteredReason(filteredOut, eligible[i], `bundler ${bundler}% exceeds hard cap ${maxBundlerHard}%`);
+        eligible.splice(i, 1);
+      } else if (bundler > maxBundlerSoft && bundler <= maxBundlerHard) {
+        eligible[i].bundler_caution_flag = true;
+        log("screening", `⚠️ Bundler yellow flag: ${eligible[i].name} has ${bundler}% (LLM to verify organic >= 70%)`);
+      }
+    }
+  }
+
   // SuperTrend entry signal (EvilPanda: enter when price is ABOVE SuperTrend)
   // Soft signal only — LLM weighs this, not a hard filter.
   // direction='up' = confirmed uptrend = good entry window
@@ -473,15 +486,13 @@ export async function getTopCandidates({ limit = 10 } = {}) {
       return true;
     }));
 
-    // CTO filter via OKX tags — community takeover = new devs collect fees while dumping
-    eligible.splice(0, eligible.length, ...eligible.filter((p) => {
-      if (p.is_cto) {
-        log("screening", `OKX CTO filter: dropped ${p.name} — dexScreenerTokenCommunityTakeOver tag`);
-        pushFilteredReason(filteredOut, p, "community takeover (OKX tag)");
-        return false;
+    // CTO soft signal via OKX tags — allow for LLM evaluation with caution flag
+    for (let i = 0; i < eligible.length; i++) {
+      if (eligible[i].is_cto) {
+        eligible[i].cto_flagged_okx = true;
+        log("screening", `OKX CTO tag on ${eligible[i].name} — soft flag (LLM to evaluate)`);
       }
-      return true;
-    }));
+    }
 
     // ATH filter — drop pools where price is too close to ATH
     const athFilter = config.screening.athFilterPct;
