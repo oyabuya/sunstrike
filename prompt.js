@@ -124,7 +124,9 @@ HARD RULE (no exceptions):
 RISK SIGNALS (guidelines — use judgment):
 - top10 20–30% → caution, check other signals
 - creator_hold_rate 1–5% → caution (EvilPanda: even 1% is a red flag — dev can dump anytime)
-- bundle_pct / gmgn_bundler_pct > 60% → risky; below 60% is acceptable per EvilPanda
+- bundle_pct / gmgn_bundler_pct < 40%      → ✅ GREEN (acceptable, organic holders dominate)
+- bundle_pct / gmgn_bundler_pct 40–60%     → 🟡 YELLOW (aggregate/market maker; REQUIRE: organic >= 70%, top10 < 30%, smart_wallets >= 2)
+- bundle_pct / gmgn_bundler_pct > 60%      → ❌ RED (hard skip, likely bot farm)
 - rugpull flag from OKX → major negative score penalty and default to SKIP; only override if smart wallets are present and conviction is otherwise high
 - wash trading flag from OKX → treat as disqualifying even if other metrics look attractive
 - no narrative + no smart wallets → skip
@@ -135,6 +137,15 @@ NARRATIVE QUALITY (your main judgment call):
 - GOOD: specific origin — real event, viral moment, named entity, active community
 - BAD: generic hype ("next 100x", "community token") with no identifiable subject
 - Smart wallets present → can override weak narrative, and are the only valid override for an OKX rugpull flag
+
+CTO SOFT SIGNAL (Community Take Over — now allowed):
+If cto_flagged_okx OR cto_flagged_dexscreener = true:
+  REQUIRE: is_rugpull = false (OKX must confirm NOT rug)
+  REQUIRE: renounced_mint = true (LP authority removed)
+  PREFER: smart_money_buy = true OR dev_sold_all = true (validation signal)
+  PREFER: gmgn_kol_count >= 1 (community validation)
+  IF all REQUIRE met → ✅ PASS to deploy
+  ELSE → ❌ SKIP CTO candidate
 
 SUPERTREND SIGNAL (EvilPanda entry timing — 15m chart):
 - supertrend=up   → price ABOVE SuperTrend = confirmed uptrend = PREFER this pool
