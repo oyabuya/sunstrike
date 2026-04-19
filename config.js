@@ -186,7 +186,11 @@ export function reloadScreeningThresholds() {
     if (fresh.maxTokenAgeHours  !== undefined) s.maxTokenAgeHours = fresh.maxTokenAgeHours;
     if (fresh.athFilterPct      !== undefined) s.athFilterPct     = fresh.athFilterPct;
     if (fresh.maxVolatility      != null) s.maxVolatility    = fresh.maxVolatility;
-    if (fresh.maxBundlePct      != null) s.maxBundlePct     = fresh.maxBundlePct;
-    if (fresh.maxBotHoldersPct  != null) s.maxBotHoldersPct = fresh.maxBotHoldersPct;
+if (fresh.maxBundlePct != null) s.maxBundlePct = fresh.maxBundlePct;
+    if (fresh.maxBotHoldersPct != null) s.maxBotHoldersPct = fresh.maxBotHoldersPct;
+    if (fresh.maxTop10Pct != null) s.maxTop10Pct = fresh.maxTop10Pct;
+    if (fresh.maxDevHoldPct != null) s.maxDevHoldPct = fresh.maxDevHoldPct;
+    if (fresh.blockedLaunchpads != null) s.blockedLaunchpads = fresh.blockedLaunchpads;
+    if (fresh.minTokenFeesSol != null) s.minTokenFeesSol = fresh.minTokenFeesSol;
   } catch { /* ignore */ }
 }

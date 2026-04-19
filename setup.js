@@ -78,7 +78,12 @@ function parseEnv(content) {
 }
 
 function buildEnv(map) {
-  return Object.entries(map).map(([k, v]) => `${k}=${v}`).join("\n") + "\n";
+  return Object.entries(map).map(([k, v]) => {
+    const escaped = typeof v === "string" && (v.includes(" ") || v.includes("="))
+      ? `"${v.replace(/"/g, '\\"')}"`
+      : v;
+    return `${k}=${escaped}`;
+  }).join("\n") + "\n";
 }
 
 // ─── Presets ──────────────────────────────────────────────────────────────────
@@ -337,9 +342,12 @@ if (provider.key === "local" || provider.key === "custom") {
   llmBaseUrl = await ask("Base URL", e("llmBaseUrl", provider.baseUrl || "http://localhost:1234/v1"));
 }
 
-const llmApiKeyExisting = e("llmApiKey", existingEnv.LLM_API_KEY || existingEnv.OPENROUTER_API_KEY || "");
-const llmApiKeyRaw = await ask("API Key", llmApiKeyExisting ? "*** (already set)" : (provider.keyHint || ""));
-const llmApiKey   = llmApiKeyRaw.startsWith("***") ? llmApiKeyExisting : llmApiKeyRaw;
+const existingProvider = existingConfig.llmProvider;
+const prevApiKey = existingProvider === provider.key
+  ? (e("llmApiKey", existingEnv.LLM_API_KEY || existingEnv.OPENROUTER_API_KEY || ""))
+  : "";
+const llmApiKeyRaw = await ask("API Key", prevApiKey ? "*** (already set)" : (provider.keyHint || ""));
+const llmApiKey = llmApiKeyRaw.startsWith("***") ? prevApiKey : llmApiKeyRaw;
 
 const llmModel = await ask(
   "Model name",
