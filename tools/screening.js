@@ -274,7 +274,7 @@ export async function discoverPools({
  */
 export async function getTopCandidates({ limit = 10 } = {}) {
   const { config } = await import("../config.js");
-  const { pools } = await discoverPools({ page_size: 50 });
+  let { pools } = await discoverPools({ page_size: 50 });
   const filteredOut = [];
 
   // Exclude pools where the wallet already has an open position
@@ -283,7 +283,7 @@ export async function getTopCandidates({ limit = 10 } = {}) {
   const occupiedPools = new Set(positions.map((p) => p.pool));
   const occupiedMints = new Set(positions.map((p) => p.base_mint).filter(Boolean));
 
-  const eligible = pools
+  let eligible = pools
     .filter((p) => {
       if (occupiedPools.has(p.pool)) {
         pushFilteredReason(filteredOut, p, "already have an open position in this pool");
