@@ -16,6 +16,10 @@ smart-wallets.json
 pool-memory.json
 token-blacklist.json
 strategy-library.json
+package-lock.json
+package.json
+signal-weights.json
+
 
 # Logs
 logs/
@@ -43,4 +47,3 @@ discord-signals.json
 
 # Claude Code runtime lock
 .claude/scheduled_tasks.lock
-signal-weights.json
