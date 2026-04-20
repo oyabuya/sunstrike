@@ -74,12 +74,13 @@ export async function recordPerformance(perf) {
 
   // Guard against unit-mixed records where a SOL-sized final value is
   // accidentally written into a USD field (e.g. final_value_usd = 2 for a 2 SOL close).
+  // Covers both large and small positions — threshold lowered from initial>=20 to initial>0.
   const suspiciousUnitMix =
     Number.isFinite(perf.initial_value_usd) &&
     Number.isFinite(perf.final_value_usd) &&
     Number.isFinite(perf.amount_sol) &&
-    perf.initial_value_usd >= 20 &&
-    perf.amount_sol >= 0.25 &&
+    perf.initial_value_usd > 0 &&
+    perf.amount_sol >= 0.05 &&
     perf.final_value_usd > 0 &&
     perf.final_value_usd <= perf.amount_sol * 2;
 

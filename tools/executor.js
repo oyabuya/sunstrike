@@ -232,6 +232,39 @@ outOfRangeWaitMinutes: ["management", "outOfRangeWaitMinutes"],
       return { success: false, unknown, reason };
     }
 
+    // Validate numeric bounds before applying — prevents LLM from setting nonsensical values
+    const NUMERIC_BOUNDS = {
+      stopLossPct:          { min: -99, max: -0.1 },
+      takeProfitFeePct:     { min: 0.5, max: 999 },
+      maxPositions:         { min: 1, max: 20 },
+      maxDeployAmount:      { min: 0.01, max: 1000 },
+      deployAmountSol:      { min: 0.01, max: 100 },
+      gasReserve:           { min: 0.01, max: 2 },
+      positionSizePct:      { min: 0.01, max: 1 },
+      minFeeActiveTvlRatio: { min: 0.001, max: 50 },
+      maxBundlePct:         { min: 0, max: 100 },
+      maxTop10Pct:          { min: 0, max: 100 },
+      minVolume:            { min: 0, max: 1_000_000 },
+      minTvl:               { min: 0, max: 10_000_000 },
+      maxTvl:               { min: 100, max: 100_000_000 },
+      outOfRangeWaitMinutes: { min: 5, max: 1440 },
+      managementIntervalMin: { min: 1, max: 1440 },
+      screeningIntervalMin:  { min: 5, max: 1440 },
+    };
+    for (const key of Object.keys(applied)) {
+      const bounds = NUMERIC_BOUNDS[key];
+      if (!bounds) continue;
+      let val = applied[key];
+      if (typeof val === "string" && !isNaN(Number(val))) val = applied[key] = Number(val);
+      if (typeof val === "number" && (val < bounds.min || val > bounds.max)) {
+        log("config", `update_config: rejected ${key}=${val} — out of safe bounds [${bounds.min}, ${bounds.max}]`);
+        delete applied[key];
+      }
+    }
+    if (Object.keys(applied).length === 0) {
+      return { success: false, reason: "All changes rejected by range validation", unknown, applied: {} };
+    }
+
     // Apply to live config immediately
     for (const [key, val] of Object.entries(applied)) {
       const [section, field] = CONFIG_MAP[key];
@@ -345,7 +378,7 @@ export async function executeTool(name, args) {
         if (_discoverPool) {
           autoDiscoverSmartWallets(_discoverPool, _discoverName)
             .then(r => { if (r.added > 0) log("smart_wallets", `Post-deploy discovery: +${r.added} new LP wallet(s) from ${_discoverName || _discoverPool.slice(0,8)}`); })
-            .catch(() => {});
+            .catch(e => log("smart_wallets", `Post-deploy discovery failed (non-critical): ${e.message}`));
         }
       } else if (name === "close_position") {
         notifyClose({ pair: result.pool_name || args.position_address?.slice(0, 8), pnlUsd: result.pnl_usd ?? 0, pnlPct: result.pnl_pct ?? 0 }).catch(() => {});
@@ -369,6 +402,8 @@ export async function executeTool(name, args) {
             }
           } catch (e) {
             log("executor_warn", `Auto-swap after close failed: ${e.message}`);
+            result.auto_swap_failed = true;
+            result.auto_swap_note = `Auto-swap failed (${e.message}). Call swap_token manually to convert ${result.base_mint?.slice(0, 8)} back to SOL.`;
           }
         }
       } else if (name === "claim_fees" && config.management.autoSwapAfterClaim && result.base_mint) {
@@ -549,6 +584,12 @@ async function runSafetyChecks(name, args) {
 
       // Hard gate: global fees paid must meet minimum threshold (bundled/scam tokens have low fees)
       const minFeesSol = config.screening.minTokenFeesSol ?? 30;
+      if (args.fees_sol == null && config.screening.antiRugStrict) {
+        return {
+          pass: false,
+          reason: `Deploy blocked: fees_sol not provided. antiRugStrict mode requires fees_sol to be verified — pass it from token info (global_fees_sol field).`,
+        };
+      }
       if (args.fees_sol != null && args.fees_sol < minFeesSol) {
         return {
           pass: false,

@@ -62,6 +62,7 @@ let _screeningLastTriggered = 0; // epoch ms — prevents management from spammi
 let _pollTriggeredAt = 0; // epoch ms — cooldown for poller-triggered management
 const _peakConfirmTimers = new Map();
 const _trailingDropConfirmTimers = new Map();
+const _suspectPnlSince = new Map(); // positionAddress → firstSuspectAt (ms)
 const TRAILING_PEAK_CONFIRM_DELAY_MS = 15_000;
 const TRAILING_PEAK_CONFIRM_TOLERANCE = 0.85;
 const TRAILING_DROP_CONFIRM_DELAY_MS = 15_000;
@@ -286,16 +287,28 @@ export async function runManagementCycle({ silent = false } = {}) {
       }
 
       // Sanity-check PnL against tracked initial deposit — API sometimes returns bad data
-      // giving -99% PnL which would incorrectly trigger stop loss
+      // giving -99% PnL which would incorrectly trigger stop loss.
+      // Safety cap: if suspicious for > 45 min, allow stop-loss anyway to prevent permanent freeze.
+      const SUSPECT_PNL_MAX_SKIP_MS = 45 * 60 * 1000;
       const tracked = getTrackedPosition(p.position);
       const pnlSuspect = (() => {
         if (p.pnl_pct == null) return false;
         if (p.pnl_pct > -90) return false; // only flag extreme negatives
         // Cross-check: if we have a tracked deposit and current value isn't near zero, it's bad data
         if (tracked?.amount_sol && (p.total_value_usd ?? 0) > 0.01) {
-          log("cron_warn", `Suspect PnL for ${p.pair}: ${p.pnl_pct}% but position still has value — skipping PnL rules`);
+          const now = Date.now();
+          if (!_suspectPnlSince.has(p.position)) _suspectPnlSince.set(p.position, now);
+          const suspectMs = now - _suspectPnlSince.get(p.position);
+          if (suspectMs > SUSPECT_PNL_MAX_SKIP_MS) {
+            log("cron_warn", `Suspect PnL for ${p.pair} exceeded 45min cap — allowing stop-loss rules to prevent freeze`);
+            _suspectPnlSince.delete(p.position);
+            return false;
+          }
+          log("cron_warn", `Suspect PnL for ${p.pair}: ${p.pnl_pct}% but position still has value — skipping PnL rules (${Math.round(suspectMs / 60000)}/${Math.round(SUSPECT_PNL_MAX_SKIP_MS / 60000)}min)`);
           return true;
         }
+        // Clear suspect tracking when PnL recovers to normal range
+        _suspectPnlSince.delete(p.position);
         return false;
       })();
 

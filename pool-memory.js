@@ -163,17 +163,32 @@ export function recordPoolDeploy(poolAddress, deployData) {
   }
 
   const oorTriggerCount = config.management.oorCooldownTriggerCount ?? 3;
+  // Mint-level cooldown always requires at least 2 OOR closes — protects against
+  // config that sets oorCooldownTriggerCount=1 (too aggressive for token-wide block)
+  const mintCooldownTriggerCount = Math.max(2, oorTriggerCount);
   const oorCooldownHours = config.management.oorCooldownHours ?? 12;
-  const recentDeploys = entry.deploys.slice(-oorTriggerCount);
-  const repeatedOorCloses =
-    recentDeploys.length >= oorTriggerCount &&
-    recentDeploys.every((d) => isOorCloseReason(d.close_reason));
 
-  if (repeatedOorCloses) {
+  // Pool-level cooldown uses configured trigger count
+  const recentForPool = entry.deploys.slice(-oorTriggerCount);
+  const poolOorTrigger =
+    recentForPool.length >= oorTriggerCount &&
+    recentForPool.every((d) => isOorCloseReason(d.close_reason));
+
+  if (poolOorTrigger) {
     const reason = `repeated OOR closes (${oorTriggerCount}x)`;
     const poolCooldownUntil = setPoolCooldown(entry, oorCooldownHours, reason);
-    const mintCooldownUntil = setBaseMintCooldown(db, entry.base_mint, oorCooldownHours, reason);
     log("pool-memory", `Cooldown set for ${entry.name} until ${poolCooldownUntil} (${reason})`);
+  }
+
+  // Mint-level cooldown uses conservative minimum (at least 2x) to avoid blocking all pools for same token
+  const recentForMint = entry.deploys.slice(-mintCooldownTriggerCount);
+  const mintOorTrigger =
+    recentForMint.length >= mintCooldownTriggerCount &&
+    recentForMint.every((d) => isOorCloseReason(d.close_reason));
+
+  if (mintOorTrigger) {
+    const reason = `repeated OOR closes (${mintCooldownTriggerCount}x)`;
+    const mintCooldownUntil = setBaseMintCooldown(db, entry.base_mint, oorCooldownHours, reason);
     if (entry.base_mint && mintCooldownUntil) {
       log("pool-memory", `Base mint cooldown set for ${entry.base_mint.slice(0, 8)} until ${mintCooldownUntil} (${reason})`);
     }

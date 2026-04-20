@@ -224,6 +224,9 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
         log("error", `Bad API response: ${JSON.stringify(response).slice(0, 200)}`);
         throw new Error(`API returned no choices: ${response.error?.message || JSON.stringify(response)}`);
       }
+      if (usedModel !== activeModel) {
+        log("agent", `Fallback model responded: ${usedModel} (original: ${activeModel})`);
+      }
       const msg = response.choices[0].message;
       // Repair malformed tool call JSON before pushing to history —
       // the API rejects the next request if history contains invalid JSON args

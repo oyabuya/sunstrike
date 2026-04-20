@@ -16,6 +16,9 @@ const STATE_FILE = "./state.json";
 const MAX_RECENT_EVENTS = 20;
 const MAX_INSTRUCTION_LENGTH = 280;
 
+// Keywords that suggest injection attempts — instructions must be simple position rules only
+const INSTRUCTION_BLOCKED_PATTERNS = /\b(deploy|swap_token|call\s+\w+_\w+|execute|run|import|require|process\.|fs\.|SYSTEM|INSTRUCTION|OVERRIDE|IGNORE PREVIOUS)\b/i;
+
 function sanitizeStoredText(text, maxLen = MAX_INSTRUCTION_LENGTH) {
   if (text == null) return null;
   const cleaned = String(text)
@@ -24,7 +27,12 @@ function sanitizeStoredText(text, maxLen = MAX_INSTRUCTION_LENGTH) {
     .replace(/[<>`]/g, "")
     .trim()
     .slice(0, maxLen);
-  return cleaned || null;
+  if (!cleaned) return null;
+  if (INSTRUCTION_BLOCKED_PATTERNS.test(cleaned)) {
+    log("state_warn", `Blocked suspicious instruction text: ${cleaned.slice(0, 60)}`);
+    return null;
+  }
+  return cleaned;
 }
 
 function load() {
