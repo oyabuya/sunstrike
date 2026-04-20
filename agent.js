@@ -5,7 +5,7 @@ import { executeTool } from "./tools/executor.js";
 import { tools } from "./tools/definitions.js";
 
 const MANAGER_TOOLS = new Set(["deploy_position", "close_position", "claim_fees", "swap_token", "get_position_pnl", "get_my_positions", "get_wallet_balance"]);
-const SCREENER_TOOLS = new Set(["get_active_bin", "get_top_candidates", "check_smart_wallets_on_pool", "get_smart_wallet_pools", "get_token_holders", "get_token_narrative", "get_token_info", "search_pools", "get_pool_memory"]);
+const SCREENER_TOOLS = new Set(["get_active_bin", "get_top_candidates", "check_smart_wallets_on_pool", "get_smart_wallet_pools", "get_token_holders", "get_token_narrative", "get_token_info", "search_pools", "get_pool_memory", "deploy_position"]);
 const GENERAL_INTENT_ONLY_TOOLS = new Set([
   "self_update",
   "update_config",
@@ -102,8 +102,8 @@ const TOOL_REQUIRED_INTENTS = /\b(deploy|open position|open|add liquidity|lp int
 
 function shouldRequireRealToolUse(goal, agentType, requireTool) {
   if (requireTool) return true;
-  if (agentType === "MANAGER") return false;
-  return TOOL_REQUIRED_INTENTS.test(goal);
+  // MANAGER wajib pakai tool — jangan dibebaskan, justru lebih kritis karena menyentuh on-chain
+  return TOOL_REQUIRED_INTENTS.test(goal) || agentType === "MANAGER";
 }
 
 function buildMessages(systemPrompt, sessionHistory, goal, providerMode = "system") {
@@ -272,6 +272,32 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
           });
           continue;
         }
+
+        // Guard: kalau goal adalah deploy, pastikan deploy_position benar-benar fired —
+        // bukan hanya sawToolCall (bisa saja screening tool yang dipanggil, bukan deploy)
+        const isDeployGoal = /(deploy|open|add liquidity|lp into|invest in)/i.test(goal);
+        if (isDeployGoal && agentType === "MANAGER") {
+          const deployWasFired = [...firedOnce].some(k => k.startsWith("deploy_position"));
+          if (!deployWasFired) {
+            noToolRetryCount += 1;
+            messages.pop();
+            log("agent", `Rejected final answer — deploy_position was NOT called (${noToolRetryCount}/2)`);
+            if (noToolRetryCount >= 2) {
+              return {
+                content: "Deploy aborted: model did not call deploy_position. No transaction was sent. Check logs.",
+                userMessage: goal,
+              };
+            }
+            messages.push({
+              role: providerMode === "system" ? "system" : "user",
+              content: providerMode === "system"
+                ? "You have not called deploy_position yet. Do NOT report a deploy as successful without calling the tool. Call deploy_position now with the selected pool."
+                : "[SYSTEM REMINDER]\nYou have not called deploy_position yet. Do NOT report a deploy as successful without calling the tool. Call deploy_position now with the selected pool.",
+            });
+            continue;
+          }
+        }
+
         log("agent", "Final answer reached");
         log("agent", msg.content);
         return { content: msg.content, userMessage: goal };

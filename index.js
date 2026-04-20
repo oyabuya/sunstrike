@@ -656,11 +656,9 @@ STEPS:
    - amount_y: ${deployAmount}  ← REQUIRED, always pass this exact value
    - amount_x: 0
    - strategy: "spot"  ← always spot, no exceptions (wide range = uniform distribution)
-   - bins_below_base: round(100 + (volatility/5)*50) clamped to [100,150]
-   - if bin_step >= 50: bins_below = round(bins_below_base * 1.2)
-     else: bins_below = bins_below_base
-       volatility 0 → 100 bins | volatility 2.5 → 125 bins | volatility 5 → 150 bins
-   - bins_above: 0
+   - bins_below: 59  (fixed, always use exactly this value)
+   - bins_above: 10  (fixed, always use exactly this value)
+   Total: 69 bins — must never exceed this to stay under single-tx limit
    - active_bin: (use pre-fetched value above)
 3. Report in this exact format (no tables, no extra sections):
    🚀 DEPLOYED

@@ -117,15 +117,15 @@ export const config = {
     generalModel:    u.generalModel    ?? process.env.LLM_MODEL ?? "openrouter/healer-alpha",
   },
 
-  // ─── Darwin Signal Weights ─────────────────────────────────────
+// ─── Darwin Signal Weights ─────────────────────────────────────
   darwin: {
-    enabled:        u.darwinEnabled        ?? true,
-    windowDays:     u.darwinWindowDays     ?? 60,
-    minSamples:     u.darwinMinSamples     ?? 10,
-    boostFactor:    u.darwinBoostFactor    ?? 1.05,
-    decayFactor:    u.darwinDecayFactor    ?? 0.95,
-    weightFloor:    u.darwinWeightFloor    ?? 0.3,
-    weightCeiling:  u.darwinWeightCeiling  ?? 2.5,
+    enabled: u.darwinEnabled ?? true,
+    windowDays: u.darwinWindowDays ?? 60,
+    minSamples: u.darwinMinSamples ?? 10,
+    boostFactor: u.darwinBoostFactor ?? 1.05,
+    decayFactor: u.darwinDecayFactor ?? 0.95,
+    weightFloor: u.darwinWeightFloor ?? 0.3,
+    weightCeiling: u.darwinWeightCeiling ?? 2.5,
   },
 
   // ─── Common Token Mints ────────────────
