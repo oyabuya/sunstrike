@@ -154,6 +154,9 @@ const toolMap = {
       maxBundlePct:     ["screening", "maxBundlePct"],
       maxBotHoldersPct: ["screening", "maxBotHoldersPct"],
       maxTop10Pct: ["screening", "maxTop10Pct"],
+      maxRatTraderPct: ["screening", "maxRatTraderPct"],
+      requireRenouncedMint: ["screening", "requireRenouncedMint"],
+      antiRugStrict: ["screening", "antiRugStrict"],
       minTokenAgeHours: ["screening", "minTokenAgeHours"],
       maxTokenAgeHours: ["screening", "maxTokenAgeHours"],
  athFilterPct: ["screening", "athFilterPct"],
@@ -444,11 +447,12 @@ async function runSafetyChecks(name, args) {
         }
       }
 
+      let poolData = null;
       // Hard gate: only deploy into SOL-quoted pools — wallet holds SOL, not stablecoins.
       // Pool data is already fetched below for the 0-position check; piggyback on that call.
       // We check quote_mint from pool detail here to prevent non-SOL deploys (e.g. unc-USDC).
       try {
-        const poolData = await getPoolDetail({ pool_address: args.pool_address });
+        poolData = await getPoolDetail({ pool_address: args.pool_address });
         const quoteMint = poolData?.quote?.mint;
         const solMint   = config.tokens.SOL;
         if (quoteMint && quoteMint !== solMint) {
@@ -466,6 +470,78 @@ async function runSafetyChecks(name, args) {
         // non-blocking — skip check if pool detail unavailable
       }
 
+      // Final anti-rug preflight gate (strict mode), applies to ALL deploy paths.
+      if (config.screening.antiRugStrict) {
+        const baseMint = args.base_mint || poolData?.base?.mint;
+        if (baseMint) {
+          let gmgnSec = null;
+          let gmgnInfo = null;
+          let okxRisk = null;
+          let tokenInfo = null;
+          try {
+            const { getRiskFlags } = await import("./okx.js");
+            const tasks = [getRiskFlags(baseMint)];
+            if (process.env.GMGN_API_KEY) {
+              const { getGmgnSecurity, getGmgnInfo } = await import("./gmgn.js");
+              tasks.push(getGmgnSecurity(baseMint), getGmgnInfo(baseMint));
+            }
+            tasks.push(getTokenInfo({ query: baseMint }));
+            const results = await Promise.allSettled(tasks);
+            okxRisk = results[0].status === "fulfilled" ? results[0].value : null;
+            if (process.env.GMGN_API_KEY) {
+              gmgnSec = results[1].status === "fulfilled" ? results[1].value : null;
+              gmgnInfo = results[2].status === "fulfilled" ? results[2].value : null;
+              tokenInfo = results[3].status === "fulfilled" ? results[3].value?.results?.[0] : null;
+            } else {
+              tokenInfo = results[1].status === "fulfilled" ? results[1].value?.results?.[0] : null;
+            }
+          } catch {
+            // non-blocking — provider unavailable, rely on existing checks
+          }
+
+          if (okxRisk?.is_rugpull === true) {
+            return { pass: false, reason: "Deploy blocked: token is flagged as rugpull by risk provider." };
+          }
+
+          if (config.screening.requireRenouncedMint && gmgnSec?.renounced_mint === false) {
+            return { pass: false, reason: "Deploy blocked: renounced_mint=false." };
+          }
+
+          const maxTop10 = config.screening.maxTop10Pct ?? 30;
+          const top10Pct = gmgnSec?.top_10_holder_rate != null
+            ? gmgnSec.top_10_holder_rate * 100
+            : tokenInfo?.audit?.top_holders_pct;
+          if (top10Pct != null && top10Pct > maxTop10) {
+            return { pass: false, reason: `Deploy blocked: top10 concentration ${Number(top10Pct).toFixed(1)}% > ${maxTop10}% limit.` };
+          }
+
+          const maxRat = config.screening.maxRatTraderPct ?? 30;
+          if (gmgnInfo?.rat_trader_pct != null && gmgnInfo.rat_trader_pct > maxRat) {
+            return { pass: false, reason: `Deploy blocked: rat_trader_pct ${gmgnInfo.rat_trader_pct}% > ${maxRat}% limit.` };
+          }
+
+          const maxDevHold = config.screening.maxDevHoldPct ?? 5;
+          const devHold = gmgnInfo?.creator_hold_rate ?? gmgnInfo?.dev_hold_rate;
+          if (devHold != null && devHold > maxDevHold) {
+            return { pass: false, reason: `Deploy blocked: dev/creator hold ${(devHold * 100).toFixed(1)}% > ${maxDevHold}% limit.` };
+          }
+
+          const maxBots = config.screening.maxBotHoldersPct;
+          const botPct = tokenInfo?.audit?.bot_holders_pct;
+          if (botPct != null && maxBots != null && botPct > maxBots) {
+            return { pass: false, reason: `Deploy blocked: bot holders ${botPct}% > ${maxBots}% limit.` };
+          }
+
+          const launchpad = tokenInfo?.launchpad ?? null;
+          if (launchpad && config.screening.allowedLaunchpads?.length > 0 && !config.screening.allowedLaunchpads.includes(launchpad)) {
+            return { pass: false, reason: `Deploy blocked: launchpad ${launchpad} not in allow-list.` };
+          }
+          if (launchpad && config.screening.blockedLaunchpads.includes(launchpad)) {
+            return { pass: false, reason: `Deploy blocked: launchpad ${launchpad} is blocklisted.` };
+          }
+        }
+      }
+
       // Hard gate: global fees paid must meet minimum threshold (bundled/scam tokens have low fees)
       const minFeesSol = config.screening.minTokenFeesSol ?? 30;
       if (args.fees_sol != null && args.fees_sol < minFeesSol) {
@@ -478,7 +554,7 @@ async function runSafetyChecks(name, args) {
       // Warn (but don't block) if pool has 0 open positions — binArrays may be uninitialized.
       // The definitive check is done on-chain inside deployPosition() in dlmm.js.
       try {
-        const poolData = await getPoolDetail({ pool_address: args.pool_address });
+        if (!poolData) poolData = await getPoolDetail({ pool_address: args.pool_address });
         if (poolData?.open_positions != null && poolData.open_positions === 0) {
           log("executor", `⚠️  Pool ${args.pool_address.slice(0, 8)} has 0 open positions — on-chain binArray check will run before deploy.`);
         }

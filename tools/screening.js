@@ -377,6 +377,45 @@ export async function getTopCandidates({ limit = 10 } = {}) {
       }
       return true;
     }));
+
+    // Renounced mint hard filter (strict mode) — if data says not renounced, reject.
+    if (config.screening.antiRugStrict && config.screening.requireRenouncedMint) {
+      eligible.splice(0, eligible.length, ...eligible.filter((p) => {
+        if (p.renounced_mint === false) {
+          log("screening", `Renounced filter: dropped ${p.name} — renounced_mint=false`);
+          pushFilteredReason(filteredOut, p, "renounced_mint=false");
+          return false;
+        }
+        return true;
+      }));
+    }
+
+    // Concentration hard filter (strict mode) — GMGN top10 holder share.
+    if (config.screening.antiRugStrict) {
+      const maxTop10 = config.screening.maxTop10Pct ?? 30;
+      eligible.splice(0, eligible.length, ...eligible.filter((p) => {
+        const top10Pct = p.gmgn_top10 != null ? p.gmgn_top10 * 100 : null;
+        if (top10Pct != null && top10Pct > maxTop10) {
+          log("screening", `Top10 filter: dropped ${p.name} — top10 ${top10Pct.toFixed(1)}% > ${maxTop10}%`);
+          pushFilteredReason(filteredOut, p, `top10 ${top10Pct.toFixed(1)}% > ${maxTop10}%`);
+          return false;
+        }
+        return true;
+      }));
+    }
+
+    // Rat trader hard filter (strict mode) — insider extraction pattern.
+    if (config.screening.antiRugStrict) {
+      const maxRatTrader = config.screening.maxRatTraderPct ?? 30;
+      eligible.splice(0, eligible.length, ...eligible.filter((p) => {
+        if (p.rat_trader_pct != null && p.rat_trader_pct > maxRatTrader) {
+          log("screening", `Rat trader filter: dropped ${p.name} — ${p.rat_trader_pct}% > ${maxRatTrader}%`);
+          pushFilteredReason(filteredOut, p, `rat_trader ${p.rat_trader_pct}% > ${maxRatTrader}%`);
+          return false;
+        }
+        return true;
+      }));
+    }
   }
 
     // Bundler soft filter: < 40% GREEN, 40-60% YELLOW, > 60% RED (hard skip)
@@ -485,6 +524,18 @@ export async function getTopCandidates({ limit = 10 } = {}) {
       }
       return true;
     }));
+
+    // Rugpull hard filter (strict mode) — never deploy if explicitly flagged.
+    if (config.screening.antiRugStrict) {
+      eligible.splice(0, eligible.length, ...eligible.filter((p) => {
+        if (p.is_rugpull === true) {
+          log("screening", `Risk filter: dropped ${p.name} — rugpull flagged`);
+          pushFilteredReason(filteredOut, p, "rugpull flagged");
+          return false;
+        }
+        return true;
+      }));
+    }
 
     // CTO soft signal via OKX tags — allow for LLM evaluation with caution flag
     for (let i = 0; i < eligible.length; i++) {

@@ -42,7 +42,10 @@ export const config = {
     maxBundlePct:      u.maxBundlePct      ?? 60,  // max bundle holding % — EvilPanda: 60% is the real threshold
     maxBotHoldersPct:  u.maxBotHoldersPct  ?? 30,  // max bot holder addresses % (Jupiter audit)
     maxTop10Pct:       u.maxTop10Pct       ?? 30,  // max top 10 holders concentration (EvilPanda: >30% = red flag)
+    maxRatTraderPct:   u.maxRatTraderPct   ?? 30,  // max insider/rat trader share from GMGN
     maxDevHoldPct:     u.maxDevHoldPct     ?? 5,   // max creator/dev hold % (EvilPanda: even 1% is red flag; hard cutoff at 5%)
+    requireRenouncedMint: u.requireRenouncedMint ?? true, // require LP/mint authority renounced when GMGN data exists
+    antiRugStrict:     u.antiRugStrict     ?? true, // enable strict anti-rug hard gates in screening + executor
     blockedLaunchpads:  u.blockedLaunchpads  ?? [],  // e.g. ["letsbonk.fun", "pump.fun"]
  minTokenAgeHours: u.minTokenAgeHours ?? 12, // skip tokens < 12h old (evolved: was 2h — too young, dump-prone)
     maxTokenAgeHours: u.maxTokenAgeHours ?? 72, // skip tokens > 72h (momentum mungkin sudah lewat)
@@ -62,7 +65,8 @@ export const config = {
     poolCooldownHours: u.poolCooldownHours ?? 4, // NEW: no redeploy ke pool sama dlm 4h (lindungin dari dump cycle)
     minVolumeToRebalance: u.minVolumeToRebalance ?? 1000,
     stopLossPct: u.stopLossPct ?? u.emergencyPriceDropPct ?? -25, // evolved: was -50 — exit lebih awal sebelum IL parah
-    takeProfitFeePct: u.takeProfitFeePct ?? 5,
+    // allow explicit null to disable hard take-profit closes
+    takeProfitFeePct: u.takeProfitFeePct !== undefined ? u.takeProfitFeePct : 5,
     minFeePerTvl24h: u.minFeePerTvl24h ?? 7,
     minAgeBeforeYieldCheck: u.minAgeBeforeYieldCheck ?? 90, // evolved: was 60 — cek yield setelah 1.5h
     minSolToOpen:          u.minSolToOpen          ?? 0.55,
@@ -192,7 +196,10 @@ export function reloadScreeningThresholds() {
  if (fresh.maxBundlePct != null) s.maxBundlePct = fresh.maxBundlePct;
     if (fresh.maxBotHoldersPct != null) s.maxBotHoldersPct = fresh.maxBotHoldersPct;
     if (fresh.maxTop10Pct != null) s.maxTop10Pct = fresh.maxTop10Pct;
+    if (fresh.maxRatTraderPct != null) s.maxRatTraderPct = fresh.maxRatTraderPct;
     if (fresh.maxDevHoldPct != null) s.maxDevHoldPct = fresh.maxDevHoldPct;
+    if (fresh.requireRenouncedMint != null) s.requireRenouncedMint = fresh.requireRenouncedMint;
+    if (fresh.antiRugStrict != null) s.antiRugStrict = fresh.antiRugStrict;
     if (fresh.blockedLaunchpads != null) s.blockedLaunchpads = fresh.blockedLaunchpads;
     if (fresh.minTokenFeesSol != null) s.minTokenFeesSol = fresh.minTokenFeesSol;
   } catch { /* ignore */ }

@@ -304,8 +304,11 @@ export async function runManagementCycle({ silent = false } = {}) {
         actionMap.set(p.position, { action: "CLOSE", rule: 1, reason: "stop loss" });
         continue;
       }
-      // Rule 2: take profit
-      if (!pnlSuspect && p.pnl_pct != null && p.pnl_pct >= config.management.takeProfitFeePct) {
+      // Rule 2: take profit (optional; can be disabled by setting takeProfitFeePct=null)
+      if (!pnlSuspect &&
+          config.management.takeProfitFeePct != null &&
+          p.pnl_pct != null &&
+          p.pnl_pct >= config.management.takeProfitFeePct) {
         actionMap.set(p.position, { action: "CLOSE", rule: 2, reason: "take profit" });
         continue;
       }
@@ -553,6 +556,31 @@ export async function runScreeningCycle({ silent = false } = {}) {
         log("screening", `Bot-holder filter: dropped ${pool.name} — bots ${botPct}% > ${maxBotHoldersPct}%`);
         filteredOut.push({ name: pool.name, reason: `bot holders ${botPct}% > ${maxBotHoldersPct}%` });
         return false;
+      }
+      if (config.screening.antiRugStrict) {
+        const top10Pct = ti?.audit?.top_holders_pct;
+        const maxTop10Pct = config.screening.maxTop10Pct;
+        if (top10Pct != null && maxTop10Pct != null && top10Pct > maxTop10Pct) {
+          log("screening", `Top10 filter: dropped ${pool.name} — top10 ${top10Pct}% > ${maxTop10Pct}%`);
+          filteredOut.push({ name: pool.name, reason: `top10 ${top10Pct}% > ${maxTop10Pct}%` });
+          return false;
+        }
+        if (config.screening.requireRenouncedMint && pool.renounced_mint === false) {
+          log("screening", `Renounced filter: dropped ${pool.name} — renounced_mint=false`);
+          filteredOut.push({ name: pool.name, reason: "renounced_mint=false" });
+          return false;
+        }
+        const maxRatTraderPct = config.screening.maxRatTraderPct;
+        if (pool.rat_trader_pct != null && maxRatTraderPct != null && pool.rat_trader_pct > maxRatTraderPct) {
+          log("screening", `Rat trader filter: dropped ${pool.name} — ${pool.rat_trader_pct}% > ${maxRatTraderPct}%`);
+          filteredOut.push({ name: pool.name, reason: `rat_trader ${pool.rat_trader_pct}% > ${maxRatTraderPct}%` });
+          return false;
+        }
+        if (pool.is_rugpull === true) {
+          log("screening", `Risk filter: dropped ${pool.name} — rugpull flagged`);
+          filteredOut.push({ name: pool.name, reason: "rugpull flagged" });
+          return false;
+        }
       }
       return true;
     });
