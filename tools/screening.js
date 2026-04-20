@@ -506,13 +506,36 @@ export async function getTopCandidates({ limit = 10 } = {}) {
           pushFilteredReason(filteredOut, p, `${p.price_vs_ath_pct}% of ATH > ${threshold}% limit`);
           return false;
         }
-        return true;
-      }));
-      if (eligible.length < before) log("screening", `ATH filter removed ${before - eligible.length} pool(s)`);
-    }
+return true;
+    }));
+    if (eligible.length < before) log("screening", `ATH filter removed ${before - eligible.length} pool(s)`);
+  }
 
-    // Drop any pools whose creator is on the dev blocklist (caught via advanced-info)
+  // Volume trend filter — skip pools where volume is not trending up
+  // Requires volume 1h > 20% vs 24h avg (filter young/mid-vol tokens without momentum)
+  const minVolChange = config.screening.minVolChangePct;
+  if (minVolChange != null) {
+    // Fetch volume trends for all eligible pools in parallel
+    const trendResults = await Promise.allSettled(
+      eligible.map(p => getVolumeTrend(p.pool))
+    );
     const before = eligible.length;
+    eligible = eligible.filter((p, i) => {
+      const trend = trendResults[i].status === "fulfilled" ? trendResults[i].value : null;
+      // No data = pass (don't filter on insufficient data), else require trend_pct >= minVolChange
+      if (trend == null || trend.trend_pct == null) return true;
+      if (trend.trend_pct < minVolChange) {
+        log("screening", `Vol trend filter: dropped ${p.name} — trend_pct ${trend.trend_pct}% < ${minVolChange}% required`);
+        pushFilteredReason(filteredOut, p, `volume trend ${trend.trend_pct}% < ${minVolChange}% (flat/declining)`);
+        return false;
+      }
+      return true;
+    });
+    if (eligible.length < before) log("screening", `Vol trend filter removed ${before - eligible.length} pool(s)`);
+}
+
+  // Drop any pools whose creator is on the dev blocklist (caught via advanced-info)
+  const before = eligible.length;
     const filtered = eligible.filter((p) => {
       if (p.dev && isDevBlocked(p.dev)) {
         log("dev_blocklist", `Filtered blocked deployer (okx) ${p.dev.slice(0, 8)} token ${p.base?.symbol}`);

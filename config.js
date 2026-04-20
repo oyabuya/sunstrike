@@ -44,10 +44,11 @@ export const config = {
     maxTop10Pct:       u.maxTop10Pct       ?? 30,  // max top 10 holders concentration (EvilPanda: >30% = red flag)
     maxDevHoldPct:     u.maxDevHoldPct     ?? 5,   // max creator/dev hold % (EvilPanda: even 1% is red flag; hard cutoff at 5%)
     blockedLaunchpads:  u.blockedLaunchpads  ?? [],  // e.g. ["letsbonk.fun", "pump.fun"]
-    minTokenAgeHours:   u.minTokenAgeHours   ?? 2,    // skip tokens < 2h old (demand belum terbukti)
-    maxTokenAgeHours:   u.maxTokenAgeHours   ?? 72,   // skip tokens > 72h (momentum mungkin sudah lewat)
-    athFilterPct:       u.athFilterPct       ?? -20,  // skip jika harga > 80% dari ATH (overheated)
-    maxVolatility:      u.maxVolatility      ?? 5.0,  // max pool volatility score (evolved by lessons.js)
+ minTokenAgeHours: u.minTokenAgeHours ?? 12, // skip tokens < 12h old (evolved: was 2h — too young, dump-prone)
+    maxTokenAgeHours: u.maxTokenAgeHours ?? 72, // skip tokens > 72h (momentum mungkin sudah lewat)
+    athFilterPct: u.athFilterPct ?? -15, // skip jika harga > 85% dari ATH (evolved: was -20 — stricter, avoid ATH dumps)
+    maxVolatility: u.maxVolatility ?? 4.0, // max pool volatility score (evolved: was 5 — mid-vol 2-4 often fakeout)
+    minVolChangePct: u.minVolChangePct ?? 20, // NEW: volume 1h harus >20% vs 24h avg sebelum deploy
   },
 
   // ─── Position Management ────────────────
@@ -55,14 +56,15 @@ export const config = {
     minClaimAmount:        u.minClaimAmount        ?? 5,
     autoSwapAfterClaim:    u.autoSwapAfterClaim    ?? false,
     outOfRangeBinsToClose: u.outOfRangeBinsToClose ?? 10,
-    outOfRangeWaitMinutes: u.outOfRangeWaitMinutes ?? 30,
-    oorCooldownTriggerCount: u.oorCooldownTriggerCount ?? 3,
-    oorCooldownHours:       u.oorCooldownHours       ?? 12,
-    minVolumeToRebalance:  u.minVolumeToRebalance  ?? 1000,
-    stopLossPct:           u.stopLossPct           ?? u.emergencyPriceDropPct ?? -50,
-    takeProfitFeePct:      u.takeProfitFeePct      ?? 5,
-    minFeePerTvl24h:       u.minFeePerTvl24h       ?? 7,
-    minAgeBeforeYieldCheck: u.minAgeBeforeYieldCheck ?? 60, // minutes before low yield can trigger close
+ outOfRangeWaitMinutes: u.outOfRangeWaitMinutes ?? 30,
+    oorCooldownTriggerCount: u.oorCooldownTriggerCount ?? 1, // evolved: was 3 — exit faster on OOR
+    oorCooldownHours: u.oorCooldownHours ?? 8, // evolved: was 12 — cooldown lebih pendek
+    poolCooldownHours: u.poolCooldownHours ?? 4, // NEW: no redeploy ke pool sama dlm 4h (lindungin dari dump cycle)
+    minVolumeToRebalance: u.minVolumeToRebalance ?? 1000,
+    stopLossPct: u.stopLossPct ?? u.emergencyPriceDropPct ?? -25, // evolved: was -50 — exit lebih awal sebelum IL parah
+    takeProfitFeePct: u.takeProfitFeePct ?? 5,
+    minFeePerTvl24h: u.minFeePerTvl24h ?? 7,
+    minAgeBeforeYieldCheck: u.minAgeBeforeYieldCheck ?? 90, // evolved: was 60 — cek yield setelah 1.5h
     minSolToOpen:          u.minSolToOpen          ?? 0.55,
     deployAmountSol:       u.deployAmountSol       ?? 0.5,
     gasReserve:            u.gasReserve            ?? 0.2,
@@ -86,12 +88,12 @@ export const config = {
     solMode:               u.solMode               ?? false,
   },
 
-  // ─── Strategy Mapping ───────────────────
-  strategy: {
-    strategy:  u.strategy  ?? "bid_ask",
-    binsBelow: u.binsBelow ?? 69,
-    binsAbove: u.binsAbove ?? 10,  // minimal upside buffer — prevents instant OOR on small pumps
-  },
+// ─── Strategy Mapping ───────────────────
+ strategy: {
+  strategy: u.strategy ?? "bid_ask",
+  binsBelow: u.binsBelow ?? 80, // evolved: was 69 — wider range (+33%) untuk dump buffer
+  binsAbove: u.binsAbove ?? 15, // evolved: was 10 — minimal upside buffer — prevents instant OOR on small pumps
+ },
 
   // ─── Scheduling ─────────────────────────
   schedule: {
@@ -182,11 +184,12 @@ export function reloadScreeningThresholds() {
     if (fresh.maxBinStep     != null) s.maxBinStep     = fresh.maxBinStep;
     if (fresh.timeframe         != null) s.timeframe         = fresh.timeframe;
     if (fresh.category          != null) s.category          = fresh.category;
-    if (fresh.minTokenAgeHours  !== undefined) s.minTokenAgeHours = fresh.minTokenAgeHours;
-    if (fresh.maxTokenAgeHours  !== undefined) s.maxTokenAgeHours = fresh.maxTokenAgeHours;
-    if (fresh.athFilterPct      !== undefined) s.athFilterPct     = fresh.athFilterPct;
-    if (fresh.maxVolatility      != null) s.maxVolatility    = fresh.maxVolatility;
-if (fresh.maxBundlePct != null) s.maxBundlePct = fresh.maxBundlePct;
+ if (fresh.minTokenAgeHours !== undefined) s.minTokenAgeHours = fresh.minTokenAgeHours;
+  if (fresh.maxTokenAgeHours !== undefined) s.maxTokenAgeHours = fresh.maxTokenAgeHours;
+  if (fresh.athFilterPct !== undefined) s.athFilterPct = fresh.athFilterPct;
+  if (fresh.maxVolatility != null) s.maxVolatility = fresh.maxVolatility;
+  if (fresh.minVolChangePct != null) s.minVolChangePct = fresh.minVolChangePct;
+ if (fresh.maxBundlePct != null) s.maxBundlePct = fresh.maxBundlePct;
     if (fresh.maxBotHoldersPct != null) s.maxBotHoldersPct = fresh.maxBotHoldersPct;
     if (fresh.maxTop10Pct != null) s.maxTop10Pct = fresh.maxTop10Pct;
     if (fresh.maxDevHoldPct != null) s.maxDevHoldPct = fresh.maxDevHoldPct;

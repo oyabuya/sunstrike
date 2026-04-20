@@ -155,6 +155,13 @@ export function recordPoolDeploy(poolAddress, deployData) {
     log("pool-memory", `Cooldown set for ${entry.name} until ${cooldownUntil} (low yield close)`);
   }
 
+  // Set cooldown for stop loss closes — pool dump-prone, protect from redeploy too soon
+  if (deploy.close_reason?.toLowerCase().includes("stop loss") || deploy.close_reason === "stop_loss") {
+    const poolCooldownHours = config.management.poolCooldownHours ?? 4;
+    const cooldownUntil = setPoolCooldown(entry, poolCooldownHours, "stop loss");
+    log("pool-memory", `Cooldown set for ${entry.name} until ${cooldownUntil} (stop loss close)`);
+  }
+
   const oorTriggerCount = config.management.oorCooldownTriggerCount ?? 3;
   const oorCooldownHours = config.management.oorCooldownHours ?? 12;
   const recentDeploys = entry.deploys.slice(-oorTriggerCount);
