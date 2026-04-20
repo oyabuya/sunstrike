@@ -345,8 +345,9 @@ export async function runManagementCycle({ silent = false } = {}) {
         actionMap.set(p.position, { action: "CHART_SIGNAL", rule: 6, reason: chartSig.summary, chartSig });
         continue;
       }
-      // Claim rule
-      if ((p.unclaimed_fees_usd ?? 0) >= config.management.minClaimAmount) {
+      // Claim rule (optional; disabled when minClaimAmount=null)
+      if (config.management.minClaimAmount != null &&
+          (p.unclaimed_fees_usd ?? 0) >= config.management.minClaimAmount) {
         actionMap.set(p.position, { action: "CLAIM" });
         continue;
       }

@@ -56,7 +56,8 @@ export const config = {
 
   // ─── Position Management ────────────────
   management: {
-    minClaimAmount:        u.minClaimAmount        ?? 5,
+    // allow explicit null to disable standalone claim_fees actions
+    minClaimAmount:        u.minClaimAmount !== undefined ? u.minClaimAmount : 5,
     autoSwapAfterClaim:    u.autoSwapAfterClaim    ?? false,
     outOfRangeBinsToClose: u.outOfRangeBinsToClose ?? 10,
  outOfRangeWaitMinutes: u.outOfRangeWaitMinutes ?? 30,
@@ -77,6 +78,14 @@ export const config = {
     // This buffer is added on top of gasReserve in all SOL sufficiency checks.
     binArrayRentBuffer:    u.binArrayRentBuffer    ?? 0.15,
     positionSizePct:       u.positionSizePct       ?? 0.35,
+    // Auto compounding controls.
+    // mode=dynamic -> use percentage-based sizing (existing behavior)
+    // mode=step    -> increase deploy amount in fixed steps as wallet grows
+    autoCompoundEnabled:   u.autoCompoundEnabled   ?? true,
+    autoCompoundMode:      u.autoCompoundMode      ?? "dynamic", // "dynamic" | "step"
+    autoCompoundStartBalanceSol: u.autoCompoundStartBalanceSol ?? null,
+    autoCompoundBalanceStepSol:  u.autoCompoundBalanceStepSol  ?? 0.02,
+    autoCompoundDeployStepSol:   u.autoCompoundDeployStepSol   ?? 0.01,
     // Trailing take-profit
     trailingTakeProfit:    u.trailingTakeProfit    ?? true,
     trailingTriggerPct:    u.trailingTriggerPct    ?? 3,    // activate trailing at X% PnL
@@ -161,8 +170,26 @@ export function computeDeployAmount(walletSol) {
   const floor    = config.management.deployAmountSol;
   const ceil     = config.risk.maxDeployAmount;
   const deployable = Math.max(0, walletSol - reserve);
-  const dynamic    = deployable * pct;
-  const result     = Math.min(ceil, Math.max(floor, dynamic));
+  let target = deployable * pct; // default dynamic sizing
+
+  const autoEnabled = config.management.autoCompoundEnabled !== false;
+  const autoMode = config.management.autoCompoundMode || "dynamic";
+  if (autoEnabled && autoMode === "step") {
+    const start = Number.isFinite(config.management.autoCompoundStartBalanceSol)
+      ? config.management.autoCompoundStartBalanceSol
+      : floor + reserve;
+    const balStep = Number(config.management.autoCompoundBalanceStepSol ?? 0.02);
+    const depStep = Number(config.management.autoCompoundDeployStepSol ?? 0.01);
+    if (balStep > 0 && depStep > 0) {
+      const steps = Math.max(0, Math.floor((walletSol - start) / balStep));
+      target = floor + steps * depStep;
+    }
+  }
+
+  // Never size above available deployable balance even if floor/cap says otherwise.
+  const upper = Math.max(0, Math.min(ceil, deployable));
+  const lower = Math.min(floor, upper);
+  const result = Math.min(upper, Math.max(lower, target));
   return parseFloat(result.toFixed(2));
 }
 
