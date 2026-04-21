@@ -457,18 +457,26 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
   }
 
   // ── Trailing TP ────────────────────────────────────────────────
+  // EvilPanda: never exit before the dump cycle completes (minAgeBeforeClose).
+  // Trailing TP is disabled by default; when enabled, age gate still applies.
   if (!pnl_pct_suspicious && pos.trailing_active) {
-    const dropFromPeak = pos.peak_pnl_pct - currentPnlPct;
-    if (trailingDropPctToUse != null && dropFromPeak >= trailingDropPctToUse) {
-      return {
-        action: "TRAILING_TP",
-        reason: `Trailing TP: peak ${pos.peak_pnl_pct.toFixed(2)}% → current ${currentPnlPct.toFixed(2)}% (dropped ${dropFromPeak.toFixed(2)}% >= ${trailingDropPctToUse}%)`,
-        needs_confirmation: true,
-        peak_pnl_pct: pos.peak_pnl_pct,
-        current_pnl_pct: currentPnlPct,
-        drop_from_peak_pct: dropFromPeak,
-        trailing_drop_pct_used: trailingDropPctToUse,
-      };
+    const ageMinutes = positionData.age_minutes ?? 0;
+    const minAgeClose = mgmtConfig.minAgeBeforeClose ?? 240;
+    if (ageMinutes < minAgeClose) {
+      // Too young — let the dump cycle play out
+    } else {
+      const dropFromPeak = pos.peak_pnl_pct - currentPnlPct;
+      if (trailingDropPctToUse != null && dropFromPeak >= trailingDropPctToUse) {
+        return {
+          action: "TRAILING_TP",
+          reason: `Trailing TP: peak ${pos.peak_pnl_pct.toFixed(2)}% → current ${currentPnlPct.toFixed(2)}% (dropped ${dropFromPeak.toFixed(2)}% >= ${trailingDropPctToUse}%)`,
+          needs_confirmation: true,
+          peak_pnl_pct: pos.peak_pnl_pct,
+          current_pnl_pct: currentPnlPct,
+          drop_from_peak_pct: dropFromPeak,
+          trailing_drop_pct_used: trailingDropPctToUse,
+        };
+      }
     }
   }
 
@@ -513,7 +521,7 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
   // A losing position must recover to breakeven before yield-based exit applies.
   // Stop loss handles catastrophic losses independently.
   const { age_minutes } = positionData;
-  const minAgeForYieldCheck = mgmtConfig.minAgeBeforeYieldCheck ?? 60;
+  const minAgeForYieldCheck = mgmtConfig.minAgeBeforeYieldCheck ?? 240;
   const yieldExitAllowed = !pnl_pct_suspicious && (currentPnlPct == null || currentPnlPct >= 0);
   const highVolumeThreshold = mgmtConfig.highVolumeFeeThresholdUsdPerHour ?? 20_000;
   const highVolumeMinFee = mgmtConfig.highVolumeMinFeePerTvl24h ?? 5;

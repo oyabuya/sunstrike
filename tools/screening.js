@@ -437,10 +437,10 @@ export async function getTopCandidates({ limit = 10 } = {}) {
     }
   }
 
-  // SuperTrend entry signal (EvilPanda: enter when price is ABOVE SuperTrend)
-  // Soft signal only — LLM weighs this, not a hard filter.
-  // direction='up' = confirmed uptrend = good entry window
-  // direction='down' = downtrend already started = lower conviction
+  // SuperTrend entry signal (EvilPanda: enter ONLY when price is ABOVE SuperTrend)
+  // HARD FILTER — EvilPanda rule: never open in downtrend.
+  // direction='up' = confirmed uptrend = valid entry window
+  // direction='down' = downtrend = skip, wait for Supertrend flip
   if (eligible.length > 0 && process.env.GMGN_API_KEY) {
     const { getEntrySignal } = await import("./ohlcv.js");
     const stResults = await Promise.allSettled(
@@ -453,6 +453,20 @@ export async function getTopCandidates({ limit = 10 } = {}) {
       eligible[i].st_pct_vs_price = r.value.st_pct_vs_price;
       eligible[i].st_entry_ok     = r.value.entry_ok;
     }
+
+    // EvilPanda HARD FILTER: reject pools in downtrend (price below SuperTrend)
+    const beforeSt = eligible.length;
+    eligible.splice(0, eligible.length, ...eligible.filter((p) => {
+      // If no SuperTrend data, allow (soft pass — data unavailable)
+      if (!p.st_direction) return true;
+      if (p.st_direction === "down") {
+        log("screening", `SuperTrend filter: dropped ${p.name} — downtrend (price ${p.st_pct_vs_price?.toFixed(1) ?? "?"}% below ST)`);
+        pushFilteredReason(filteredOut, p, `SuperTrend downtrend`);
+        return false;
+      }
+      return true;
+    }));
+    if (eligible.length < beforeSt) log("screening", `SuperTrend hard filter: ${beforeSt - eligible.length} pool(s) dropped (downtrend)`);
   }
 
   // Enrich with OKX data — advanced info (risk/bundle/sniper) + ATH price (no API key required)

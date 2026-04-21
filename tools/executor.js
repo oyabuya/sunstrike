@@ -167,6 +167,8 @@ const toolMap = {
   minVolChangePct: ["screening", "minVolChangePct"],
   maxVolatility: ["screening", "maxVolatility"],
   minFeePerTvl24h: ["management", "minFeePerTvl24h"],
+      minAgeBeforeYieldCheck: ["management", "minAgeBeforeYieldCheck"],
+      minAgeBeforeClose: ["management", "minAgeBeforeClose"],
       // management
       minClaimAmount: ["management", "minClaimAmount"],
       autoSwapAfterClaim: ["management", "autoSwapAfterClaim"],
@@ -252,6 +254,8 @@ outOfRangeWaitMinutes: ["management", "outOfRangeWaitMinutes"],
       minTvl:               { min: 0, max: 10_000_000 },
       maxTvl:               { min: 100, max: 100_000_000 },
       outOfRangeWaitMinutes: { min: 5, max: 1440 },
+      minAgeBeforeYieldCheck: { min: 15, max: 1440 },
+      minAgeBeforeClose:     { min: 15, max: 1440 },
       managementIntervalMin: { min: 1, max: 1440 },
       screeningIntervalMin:  { min: 5, max: 1440 },
     };

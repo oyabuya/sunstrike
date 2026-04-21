@@ -29,10 +29,10 @@ export const config = {
     minFeeActiveTvlRatio: u.minFeeActiveTvlRatio ?? 0.05,
     minTvl:            u.minTvl            ?? 10_000,
     maxTvl:            u.maxTvl            ?? 150_000,
-    minVolume:         u.minVolume         ?? 500,
+    minVolume:         u.minVolume         ?? 1000, // EvilPanda: $1M 24h vol minimum
     minOrganic:        u.minOrganic        ?? 60,
     minHolders:        u.minHolders        ?? 500,
-    minMcap:           u.minMcap           ?? 150_000,
+    minMcap:           u.minMcap           ?? 250_000, // EvilPanda: $250k MC minimum
     maxMcap:           u.maxMcap           ?? 10_000_000,
     minBinStep:        u.minBinStep        ?? 80,
     maxBinStep:        u.maxBinStep        ?? 125,
@@ -65,11 +65,12 @@ export const config = {
     oorCooldownHours: u.oorCooldownHours ?? 8, // evolved: was 12 — cooldown lebih pendek
     poolCooldownHours: u.poolCooldownHours ?? 4, // NEW: no redeploy ke pool sama dlm 4h (lindungin dari dump cycle)
     minVolumeToRebalance: u.minVolumeToRebalance ?? 1000,
-    stopLossPct: u.stopLossPct ?? u.emergencyPriceDropPct ?? -25, // evolved: was -50 — exit lebih awal sebelum IL parah
+    stopLossPct: u.stopLossPct ?? u.emergencyPriceDropPct ?? -80, // Circuit breaker only — EvilPanda uses chart judgment, not % stop loss. This prevents total loss from bugs/data errors.
     // allow explicit null to disable hard take-profit closes
     takeProfitFeePct: u.takeProfitFeePct !== undefined ? u.takeProfitFeePct : 5,
     minFeePerTvl24h: u.minFeePerTvl24h ?? 7,
-    minAgeBeforeYieldCheck: u.minAgeBeforeYieldCheck ?? 90, // evolved: was 60 — cek yield setelah 1.5h
+    minAgeBeforeYieldCheck: u.minAgeBeforeYieldCheck ?? 240, // EvilPanda: fee needs 4h+ to accumulate before yield-based exit
+    minAgeBeforeClose:     u.minAgeBeforeClose     ?? 240, // EvilPanda: never close <4h unless stop loss — wait for dump cycle
     minSolToOpen:          u.minSolToOpen          ?? 0.55,
     deployAmountSol:       u.deployAmountSol       ?? 0.5,
     gasReserve:            u.gasReserve            ?? 0.2,
@@ -86,8 +87,8 @@ export const config = {
     autoCompoundStartBalanceSol: u.autoCompoundStartBalanceSol ?? null,
     autoCompoundBalanceStepSol:  u.autoCompoundBalanceStepSol  ?? 0.02,
     autoCompoundDeployStepSol:   u.autoCompoundDeployStepSol   ?? 0.01,
-    // Trailing take-profit
-    trailingTakeProfit:    u.trailingTakeProfit    ?? true,
+    // Trailing take-profit — DISABLED per EvilPanda: not part of the strategy, causes paper-handing
+    trailingTakeProfit:    u.trailingTakeProfit    ?? false,
     trailingTriggerPct:    u.trailingTriggerPct    ?? 3,    // activate trailing at X% PnL
     trailingDropPct:       u.trailingDropPct       ?? 1.5,  // close when drops X% from peak
     highYieldTrailingFeePerTvl24h: u.highYieldTrailingFeePerTvl24h ?? 20,
@@ -115,8 +116,8 @@ export const config = {
     healthCheckIntervalMin: u.healthCheckIntervalMin ?? 60,
     highVolatilityCutoff:   u.highVolatilityCutoff   ?? 5,
     midVolatilityCutoff:    u.midVolatilityCutoff    ?? 2,
-    highVolManagementIntervalMin: u.highVolManagementIntervalMin ?? 5,
-    midVolManagementIntervalMin:  u.midVolManagementIntervalMin  ?? 8,
+    highVolManagementIntervalMin: u.highVolManagementIntervalMin ?? 15, // EvilPanda: 15min chart, no babysitting
+    midVolManagementIntervalMin:  u.midVolManagementIntervalMin  ?? 15, // EvilPanda: 15min chart, no babysitting
     lowVolManagementIntervalMin:  u.lowVolManagementIntervalMin  ?? 15,
   },
 

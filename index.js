@@ -346,15 +346,16 @@ export async function runManagementCycle({ silent = false } = {}) {
       if (!pnlSuspect && p.fee_per_tvl_24h != null &&
           adaptiveMinFeePerTvl24h != null &&
           p.fee_per_tvl_24h < adaptiveMinFeePerTvl24h &&
-          (p.age_minutes ?? 0) >= (config.management.minAgeBeforeYieldCheck ?? 60) &&
+          (p.age_minutes ?? 0) >= (config.management.minAgeBeforeYieldCheck ?? 240) &&
           (p.pnl_pct == null || p.pnl_pct >= 0)) {
         actionMap.set(p.position, { action: "CLOSE", rule: 5, reason: "low yield" });
         continue;
       }
       // Rule 6: EvilPanda chart exit signal — RSI(2)>90 + BB/MACD confluence
       // Not a hard close — LLM evaluates in context of PnL and position health.
+      // EvilPanda age gate: never exit via chart signal before dump cycle completes (minAgeBeforeClose).
       const chartSig = chartSignalMap.get(p.position);
-      if (chartSig?.exit_signal) {
+      if (chartSig?.exit_signal && (p.age_minutes ?? 0) >= (config.management.minAgeBeforeClose ?? 240)) {
         actionMap.set(p.position, { action: "CHART_SIGNAL", rule: 6, reason: chartSig.summary, chartSig });
         continue;
       }
@@ -417,6 +418,11 @@ export async function runManagementCycle({ silent = false } = {}) {
           `  bins: lower=${p.lower_bin} upper=${p.upper_bin} active=${p.active_bin} | oor_minutes: ${p.minutes_out_of_range ?? 0}`,
           p.instruction ? `  instruction: "${p.instruction}"` : null,
           chartSig ? `  chart(15m): candle=${chartSig.is_green_candle ? "🟢GREEN" : "🔴RED"}(${chartSig.candle_body_pct > 0 ? "+" : ""}${chartSig.candle_body_pct}%) rsi2=${chartSig.rsi2} bb_above=${chartSig.bb_above_upper} macd_green=${chartSig.macd_first_green}${chartSig.bounce_pattern ? " BOUNCE_PATTERN" : ""}${chartSig.exit_signal ? " → EXIT WINDOW" : ""}` : null,
+          chartSig?.rsi_history ? `  rsi_history(8): [${chartSig.rsi_history.join(", ")}] ${chartSig.rsi_history[chartSig.rsi_history.length - 1] > chartSig.rsi_history[0] ? "↗ rising" : chartSig.rsi_history[chartSig.rsi_history.length - 1] < chartSig.rsi_history[0] ? "↘ falling" : "→ flat"}` : null,
+          chartSig?.last_candles ? `  candles(8): ${chartSig.last_candles.join(" ")}` : null,
+          chartSig?.volume_trend ? `  volume_trend: ${chartSig.volume_trend}${chartSig.bb_distance_pct != null ? ` | dist_to_BB_lower: ${chartSig.bb_distance_pct}%` : ""}` : null,
+          chartSig?.macd_trajectory ? `  macd_hist(5): [${chartSig.macd_trajectory.join(", ")}]` : null,
+          chartSig?.dump_phase ? `  phase: ${chartSig.dump_phase} — ${chartSig.phase_description}` : null,
         ].filter(Boolean).join("\n");
       }).join("\n\n");
 
