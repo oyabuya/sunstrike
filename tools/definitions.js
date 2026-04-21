@@ -1061,4 +1061,80 @@ Blacklisted tokens are filtered BEFORE the LLM even sees pool candidates.`,
       }
     }
   },
+
+  // ═══════════════════════════════════════════
+  //  EXTERNAL DATA: DexScreener + RugCheck
+  // ═══════════════════════════════════════════
+  {
+    type: "function",
+    function: {
+      name: "get_trending_tokens",
+      description: `Get currently trending tokens on Solana from DexScreener.
+Returns tokens ranked by 24h volume with price change, liquidity, and transaction count.
+Useful for: discovering what narratives/sectors are hot right now, finding high-volume
+tokens that may have good LP opportunities on Meteora.
+
+This is a free endpoint — no API key required.`,
+      parameters: {
+        type: "object",
+        properties: {
+          limit: {
+            type: "number",
+            description: "Max tokens to return (default 20, max 30)"
+          }
+        }
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_dexscreener_pairs",
+      description: `Get all DEX trading pairs for a token mint from DexScreener.
+Shows pairs across multiple DEXes (Raydium, Orca, Meteora, etc.) with price,
+liquidity, and 24h volume per pair.
+
+Useful for: cross-DEX liquidity validation — if a token only has liquidity
+on one DEX, it may be riskier. Also helps verify price consistency.
+
+This is a free endpoint — no API key required.`,
+      parameters: {
+        type: "object",
+        properties: {
+          mint: {
+            type: "string",
+            description: "Token mint address (base58)"
+          }
+        },
+        required: ["mint"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_rugcheck_report",
+      description: `Get a security audit report for a token from RugCheck.xyz.
+Checks: mint authority status, freeze authority, LP lock/burn, top holder
+concentration, supply distribution, and overall risk score.
+
+Risk levels: 'safe', 'warning', 'danger', 'ok'
+
+Use as a secondary security layer alongside GMGN token security data.
+GMGN checks bundler/rat-trader exposure; RugCheck checks on-chain
+authority and LP lock status — they complement each other.
+
+Free API — no key required.`,
+      parameters: {
+        type: "object",
+        properties: {
+          mint: {
+            type: "string",
+            description: "Token mint address (base58)"
+          }
+        },
+        required: ["mint"]
+      }
+    }
+  },
 ];

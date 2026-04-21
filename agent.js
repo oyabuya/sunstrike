@@ -5,7 +5,7 @@ import { executeTool } from "./tools/executor.js";
 import { tools } from "./tools/definitions.js";
 
 const MANAGER_TOOLS = new Set(["deploy_position", "close_position", "claim_fees", "swap_token", "get_position_pnl", "get_my_positions", "get_wallet_balance"]);
-const SCREENER_TOOLS = new Set(["get_active_bin", "get_top_candidates", "check_smart_wallets_on_pool", "get_smart_wallet_pools", "get_token_holders", "get_token_narrative", "get_token_info", "search_pools", "get_pool_memory", "deploy_position"]);
+const SCREENER_TOOLS = new Set(["get_active_bin", "get_top_candidates", "check_smart_wallets_on_pool", "get_smart_wallet_pools", "get_token_holders", "get_token_narrative", "get_token_info", "search_pools", "get_pool_memory", "deploy_position", "get_trending_tokens", "get_rugcheck_report", "get_dexscreener_pairs"]);
 const GENERAL_INTENT_ONLY_TOOLS = new Set([
   "self_update",
   "update_config",
@@ -28,7 +28,7 @@ const GENERAL_INTENT_ONLY_TOOLS = new Set([
 
 // Intent → tool subsets for GENERAL role
 const INTENT_TOOLS = {
- deploy: new Set(["get_top_candidates", "get_active_bin", "get_pool_memory", "check_smart_wallets_on_pool", "get_token_holders", "get_token_narrative", "get_token_info", "search_pools", "get_wallet_balance", "get_my_positions", "add_pool_note"]),
+ deploy: new Set(["get_top_candidates", "get_active_bin", "get_pool_memory", "check_smart_wallets_on_pool", "get_token_holders", "get_token_narrative", "get_token_info", "search_pools", "get_wallet_balance", "get_my_positions", "add_pool_note", "get_rugcheck_report", "get_dexscreener_pairs"]),
   close:       new Set(["close_position", "get_my_positions", "get_position_pnl", "get_wallet_balance", "swap_token"]),
   claim:       new Set(["claim_fees", "get_my_positions", "get_position_pnl", "get_wallet_balance"]),
   swap:        new Set(["swap_token", "get_wallet_balance"]),
@@ -38,12 +38,13 @@ const INTENT_TOOLS = {
   balance:     new Set(["get_wallet_balance", "get_my_positions", "get_wallet_positions"]),
   positions:   new Set(["get_my_positions", "get_position_pnl", "get_wallet_balance", "set_position_note", "get_wallet_positions"]),
   strategy:    new Set(["list_strategies", "get_strategy", "add_strategy", "remove_strategy", "set_active_strategy"]),
-  screen:      new Set(["get_top_candidates", "get_token_holders", "get_token_narrative", "get_token_info", "search_pools", "check_smart_wallets_on_pool", "get_pool_detail", "get_my_positions", "discover_pools"]),
+  screen:      new Set(["get_top_candidates", "get_token_holders", "get_token_narrative", "get_token_info", "search_pools", "check_smart_wallets_on_pool", "get_pool_detail", "get_my_positions", "discover_pools", "get_trending_tokens", "get_rugcheck_report", "get_dexscreener_pairs"]),
   memory:      new Set(["get_pool_memory", "add_pool_note", "list_blacklist", "add_to_blacklist", "remove_from_blacklist"]),
   smartwallet: new Set(["add_smart_wallet", "remove_smart_wallet", "list_smart_wallets", "check_smart_wallets_on_pool"]),
   study:       new Set(["study_top_lpers", "get_top_lpers", "get_pool_detail", "search_pools", "get_token_info", "discover_pools", "add_smart_wallet", "list_smart_wallets"]),
   performance: new Set(["get_performance_history", "get_my_positions", "get_position_pnl"]),
   lessons:     new Set(["add_lesson", "pin_lesson", "unpin_lesson", "list_lessons", "clear_lessons"]),
+  trending:    new Set(["get_trending_tokens", "get_token_info", "get_rugcheck_report", "get_dexscreener_pairs"]),
 };
 
 const INTENT_PATTERNS = [
@@ -63,6 +64,8 @@ const INTENT_PATTERNS = [
   { intent: "study",       re: /\b(study top|top lpers?|best lpers?|who.?s lping|lp behavior|lpers?)\b/i },
   { intent: "performance", re: /\b(performance|history|how.?s the bot|how.?s it doing|stats|report)\b/i },
   { intent: "lessons",     re: /\b(lesson|learned|teach|pin|unpin|clear lesson|what did you learn)\b/i },
+  { intent: "trending",    re: /\b(trending|hot|what.?s trending|narrative|sector|pumping|viral|trending now|top token)\b/i },
+  { intent: "screen",      re: /\b(security|rug.?check|audit|safe|is it safe|honeypot|scam|legit)\b/i },
 ];
 
 function getToolsForRole(agentType, goal = "") {
