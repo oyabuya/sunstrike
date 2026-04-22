@@ -276,6 +276,7 @@ export async function discoverPools({
  */
 export async function getTopCandidates({ limit = 10 } = {}) {
   const { config } = await import("../config.js");
+  const s = config.screening;
   let { pools } = await discoverPools({ page_size: 50 });
   const filteredOut = [];
   let screeningProfile = "strict";
