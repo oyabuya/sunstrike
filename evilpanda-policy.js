@@ -89,6 +89,8 @@ export function scoreEvilPandaCandidate(pool = {}) {
   }
 
   if (pool.bundler_caution_flag) score -= 2;
+  if (pool.st_caution_flag) score -= 4;
+  if (pool.vol_trend_caution_flag) score -= 3;
   if (pool.cto_flagged_okx || pool.cto_flagged_dexscreener) score -= 1;
   if (pool.is_rugpull === true) score -= 25;
   if (pool.is_wash === true) score -= 25;
@@ -99,11 +101,23 @@ export function scoreEvilPandaCandidate(pool = {}) {
 
 export function getRelaxedEvilPandaOverrides(screening = config.screening) {
   return {
-    minVolume: Math.max(50_000, Math.floor((screening?.minVolume ?? 1_000_000) * 0.25)),
-    minFeeActiveTvlRatio: Math.max(0.02, Number((screening?.minFeeActiveTvlRatio ?? 0.05) * 0.5)),
-    minTokenAgeHours: Math.min(screening?.minTokenAgeHours ?? 12, 6),
+    minVolume: Math.max(25_000, Math.floor((screening?.minVolume ?? 1_000_000) * 0.15)),
+    minFeeActiveTvlRatio: Math.max(0.015, Number((screening?.minFeeActiveTvlRatio ?? 0.05) * 0.4)),
+    minTokenAgeHours: Math.min(screening?.minTokenAgeHours ?? 12, 3),
     maxTokenAgeHours: Math.max(screening?.maxTokenAgeHours ?? 72, 168),
-    maxVolatility: Math.max(screening?.maxVolatility ?? 4, 5.5),
-    minVolChangePct: Math.min(screening?.minVolChangePct ?? 20, 10),
+    maxVolatility: Math.max(screening?.maxVolatility ?? 4, 6.5),
+    minVolChangePct: 0,
+  };
+}
+
+export function getEvilPandaThresholds(screening = config.screening) {
+  return {
+    maxDevHoldPct: Math.max(screening?.maxDevHoldPct ?? 5, 5),
+    maxTop10Pct: Math.max(screening?.maxTop10Pct ?? 30, 45),
+    maxRatTraderPct: Math.max(screening?.maxRatTraderPct ?? 30, 30),
+    maxBundlerSoftPct: 45,
+    maxBundlerHardPct: 70,
+    minVolumeTrendPct: 10,
+    severeVolumeTrendPct: -50,
   };
 }

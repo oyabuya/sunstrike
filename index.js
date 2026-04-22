@@ -17,7 +17,7 @@ import { recordPositionSnapshot, recallForPool, addPoolNote } from "./pool-memor
 import { checkSmartWalletsOnPool, getSmartWalletCandidatePools } from "./smart-wallets.js";
 import { getTokenNarrative, getTokenInfo } from "./tools/token.js";
 import { getPoolDetail } from "./tools/screening.js";
-import { computeEvilPandaDeployPlan, formatEvilPandaDeployPlan } from "./evilpanda-policy.js";
+import { computeEvilPandaDeployPlan, formatEvilPandaDeployPlan, getEvilPandaThresholds } from "./evilpanda-policy.js";
 
 log("startup", "DLMM LP Agent starting...");
 log("startup", `Mode: ${process.env.DRY_RUN === "true" ? "DRY RUN" : "LIVE"}`);
@@ -587,6 +587,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
 
     // Hard filters after token recon — block launchpads and excessive Jupiter bot holders
     const filteredOut = [];
+    const evilPandaThresholds = getEvilPandaThresholds(config.screening);
     const applyPostReconFilters = (items) => items.filter(({ pool, ti }) => {
       const launchpad = ti?.launchpad ?? null;
       if (launchpad && config.screening.allowedLaunchpads?.length > 0 && !config.screening.allowedLaunchpads.includes(launchpad)) {
@@ -608,7 +609,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
       }
       if (config.screening.antiRugStrict) {
         const top10Pct = ti?.audit?.top_holders_pct;
-        const maxTop10Pct = Math.max(config.screening.maxTop10Pct ?? 30, 40);
+        const maxTop10Pct = evilPandaThresholds.maxTop10Pct;
         if (top10Pct != null && maxTop10Pct != null && top10Pct > maxTop10Pct) {
           log("screening", `Top10 filter: dropped ${pool.name} — top10 ${top10Pct}% > ${maxTop10Pct}%`);
           filteredOut.push({ name: pool.name, reason: `top10 ${top10Pct}% > ${maxTop10Pct}%` });
@@ -619,7 +620,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
           filteredOut.push({ name: pool.name, reason: "renounced_mint=false" });
           return false;
         }
-        const maxRatTraderPct = Math.max(config.screening.maxRatTraderPct ?? 30, 30);
+        const maxRatTraderPct = evilPandaThresholds.maxRatTraderPct;
         if (pool.rat_trader_pct != null && maxRatTraderPct != null && pool.rat_trader_pct > maxRatTraderPct) {
           log("screening", `Rat trader filter: dropped ${pool.name} — ${pool.rat_trader_pct}% > ${maxRatTraderPct}%`);
           filteredOut.push({ name: pool.name, reason: `rat_trader ${pool.rat_trader_pct}% > ${maxRatTraderPct}%` });

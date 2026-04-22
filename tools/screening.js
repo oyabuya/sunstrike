@@ -3,7 +3,7 @@ import { isBlacklisted } from "../token-blacklist.js";
 import { isDevBlocked, getBlockedDevs } from "../dev-blocklist.js";
 import { log } from "../logger.js";
 import { isBaseMintOnCooldown, isPoolOnCooldown } from "../pool-memory.js";
-import { getRelaxedEvilPandaOverrides, scoreEvilPandaCandidate } from "../evilpanda-policy.js";
+import { getRelaxedEvilPandaOverrides, scoreEvilPandaCandidate, getEvilPandaThresholds } from "../evilpanda-policy.js";
 
 const FETCH_TIMEOUT_MS = 15_000;
 
@@ -320,6 +320,19 @@ export async function getTopCandidates({ limit = 10 } = {}) {
     totalScreened = relaxedDiscovery.pools?.length ?? totalScreened;
     eligible = buildBaseEligible(relaxedDiscovery.pools || []);
     screeningProfile = "relaxed";
+  } else if (eligible.length < Math.max(3, Math.ceil(limit / 2))) {
+    const relaxedOverrides = getRelaxedEvilPandaOverrides(config.screening);
+    log("screening", `Strict screening returned only ${eligible.length} candidate(s) — topping up with relaxed EvilPanda fallback`);
+    const relaxedDiscovery = await discoverPools({ page_size: 75, overrides: relaxedOverrides }).catch(() => ({ pools: [] }));
+    totalScreened = Math.max(totalScreened, relaxedDiscovery.pools?.length ?? totalScreened);
+    const relaxedEligible = buildBaseEligible(relaxedDiscovery.pools || []);
+    const seen = new Set(eligible.map((p) => p.pool));
+    for (const pool of relaxedEligible) {
+      if (seen.has(pool.pool)) continue;
+      eligible.push(pool);
+      seen.add(pool.pool);
+    }
+    screeningProfile = "balanced";
   }
 
   if (s.avoidPvpSymbols && eligible.length > 0) {
@@ -382,7 +395,8 @@ export async function getTopCandidates({ limit = 10 } = {}) {
 
     // Dev/creator holding hard filter — dev holding > 5% = danger (EvilPanda: even 1% is red flag)
     // We use 5% as hard cutoff; 1-5% is flagged in prompt as caution.
-    const maxDevHold = Math.max(s.maxDevHoldPct ?? 5, 5);
+    const { maxDevHoldPct, maxTop10Pct, maxRatTraderPct, maxBundlerSoftPct, maxBundlerHardPct, minVolumeTrendPct, severeVolumeTrendPct } = getEvilPandaThresholds(s);
+    const maxDevHold = maxDevHoldPct;
     eligible.splice(0, eligible.length, ...eligible.filter((p) => {
       const hold = p.creator_hold_rate ?? p.dev_hold_rate;
       if (hold != null && hold > maxDevHold) {
@@ -407,7 +421,7 @@ export async function getTopCandidates({ limit = 10 } = {}) {
 
     // Concentration hard filter (strict mode) — GMGN top10 holder share.
     if (s.antiRugStrict) {
-      const maxTop10 = Math.max(s.maxTop10Pct ?? 30, 40);
+      const maxTop10 = maxTop10Pct;
       eligible.splice(0, eligible.length, ...eligible.filter((p) => {
         const top10Pct = p.gmgn_top10 != null ? p.gmgn_top10 * 100 : null;
         if (top10Pct != null && top10Pct > maxTop10) {
@@ -421,7 +435,7 @@ export async function getTopCandidates({ limit = 10 } = {}) {
 
     // Rat trader hard filter (strict mode) — insider extraction pattern.
     if (s.antiRugStrict) {
-      const maxRatTrader = Math.max(s.maxRatTraderPct ?? 30, 30);
+      const maxRatTrader = maxRatTraderPct;
       eligible.splice(0, eligible.length, ...eligible.filter((p) => {
         if (p.rat_trader_pct != null && p.rat_trader_pct > maxRatTrader) {
           log("screening", `Rat trader filter: dropped ${p.name} — ${p.rat_trader_pct}% > ${maxRatTrader}%`);
@@ -435,8 +449,8 @@ export async function getTopCandidates({ limit = 10 } = {}) {
 
     // Bundler soft filter: < 40% GREEN, 40-60% YELLOW, > 60% RED (hard skip)
   if (eligible.length > 0 && process.env.GMGN_API_KEY) {
-    const maxBundlerSoft = 40;
-    const maxBundlerHard = 60;
+    const maxBundlerSoft = maxBundlerSoftPct;
+    const maxBundlerHard = maxBundlerHardPct;
     
     for (let i = eligible.length - 1; i >= 0; i--) {
       const bundler = eligible[i].gmgn_bundler_pct ?? 0;
@@ -469,19 +483,15 @@ export async function getTopCandidates({ limit = 10 } = {}) {
       eligible[i].st_entry_ok     = r.value.entry_ok;
     }
 
-    // EvilPanda HARD FILTER: reject pools in downtrend (price below SuperTrend)
+    // EvilPanda signal: downtrend is a penalty, not a hard reject.
     const beforeSt = eligible.length;
-    eligible.splice(0, eligible.length, ...eligible.filter((p) => {
-      // If no SuperTrend data, allow (soft pass — data unavailable)
-      if (!p.st_direction) return true;
+    for (const p of eligible) {
       if (p.st_direction === "down") {
-        log("screening", `SuperTrend filter: dropped ${p.name} — downtrend (price ${p.st_pct_vs_price?.toFixed(1) ?? "?"}% below ST)`);
-        pushFilteredReason(filteredOut, p, `SuperTrend downtrend`);
-        return false;
+        p.st_caution_flag = true;
+        log("screening", `SuperTrend caution: ${p.name} — downtrend (price ${p.st_pct_vs_price?.toFixed(1) ?? "?"}% below ST)`);
       }
-      return true;
-    }));
-    if (eligible.length < beforeSt) log("screening", `SuperTrend hard filter: ${beforeSt - eligible.length} pool(s) dropped (downtrend)`);
+    }
+    if (eligible.length < beforeSt) log("screening", `SuperTrend signal applied to ${beforeSt - eligible.length} pool(s)`);
   }
 
   // Enrich with OKX data — advanced info (risk/bundle/sniper) + ATH price (no API key required)
@@ -604,10 +614,14 @@ return true;
       const trend = trendResults[i].status === "fulfilled" ? trendResults[i].value : null;
       // No data = pass (don't filter on insufficient data), else require trend_pct >= minVolChange
       if (trend == null || trend.trend_pct == null) return true;
-      if (trend.trend_pct < minVolChange) {
-        log("screening", `Vol trend filter: dropped ${p.name} — trend_pct ${trend.trend_pct}% < ${minVolChange}% required`);
-        pushFilteredReason(filteredOut, p, `volume trend ${trend.trend_pct}% < ${minVolChange}% (flat/declining)`);
+      if (trend.trend_pct < severeVolumeTrendPct) {
+        log("screening", `Vol trend filter: dropped ${p.name} — trend_pct ${trend.trend_pct}% < ${severeVolumeTrendPct}% severe decline`);
+        pushFilteredReason(filteredOut, p, `volume trend ${trend.trend_pct}% < ${severeVolumeTrendPct}% severe decline`);
         return false;
+      }
+      if (trend.trend_pct < minVolChange) {
+        p.vol_trend_caution_flag = true;
+        log("screening", `Vol trend caution: ${p.name} — trend_pct ${trend.trend_pct}% < ${minVolChange}% required`);
       }
       return true;
     });

@@ -154,15 +154,15 @@ HARD RULE (no exceptions):
 - gmgn_honeypot = true → SKIP immediately, no exceptions.
 - renounced_mint = false (LP not renounced) → SKIP.
 - creator_hold_rate OR dev_hold_rate > 5% → SKIP. Dev can dump anytime.
-- top10 > 40% (from gmgn_top10 or audit) → SKIP. Concentration too high.
+- top10 > 45% (from gmgn_top10 or audit) → SKIP. Concentration too high.
 - rat_trader_pct > 30% → SKIP. Insider extraction pattern.
 
 RISK SIGNALS (guidelines — use judgment):
 - top10 20–30% → caution, check other signals
 - creator_hold_rate 1–5% → caution (EvilPanda: even 1% is a red flag — dev can dump anytime)
-- bundle_pct / gmgn_bundler_pct < 40%      → ✅ GREEN (acceptable, organic holders dominate)
-- bundle_pct / gmgn_bundler_pct 40–60%     → 🟡 YELLOW (aggregate/market maker; REQUIRE: organic >= 70%, top10 < 30%, smart_wallets >= 2)
-- bundle_pct / gmgn_bundler_pct > 60%      → ❌ RED (hard skip, likely bot farm)
+- bundle_pct / gmgn_bundler_pct < 45%      → ✅ GREEN (acceptable, organic holders dominate)
+- bundle_pct / gmgn_bundler_pct 45–70%     → 🟡 YELLOW (aggregate/market maker; REQUIRE: stronger conviction from smart wallets or smart_money_buy)
+- bundle_pct / gmgn_bundler_pct > 70%      → ❌ RED (hard skip, likely bot farm)
 - rugpull flag from OKX → major negative score penalty and default to SKIP; only override if smart wallets are present and conviction is otherwise high
 - wash trading flag from OKX → treat as disqualifying even if other metrics look attractive
 - no narrative + no smart wallets → skip
@@ -185,7 +185,7 @@ If cto_flagged_okx OR cto_flagged_dexscreener = true:
 
 SUPERTREND SIGNAL (EvilPanda entry timing — 15m chart):
 - supertrend=up   → price ABOVE SuperTrend = confirmed uptrend = PREFER this pool
-- supertrend=down → price BELOW SuperTrend = downtrend already started = lower conviction, needs strong other signals
+- supertrend=down → price BELOW SuperTrend = downtrend already started = lower conviction, not an automatic skip
 - No ST data      → ignore; data may be unavailable for very new tokens
 
 SMART WALLET REVERSE TRACKING (MANDATORY):

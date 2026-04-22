@@ -22,6 +22,7 @@ import { addSmartWallet, removeSmartWallet, listSmartWallets, checkSmartWalletsO
 import { getTokenInfo, getTokenHolders, getTokenNarrative } from "./token.js";
 import { getTrendingTokens, getDexScreenerPairs, getRugCheckReport } from "./dexscreener-rugcheck.js";
 import { config, reloadScreeningThresholds } from "../config.js";
+import { getEvilPandaThresholds } from "../evilpanda-policy.js";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -555,7 +556,8 @@ async function runSafetyChecks(name, args) {
             return { pass: false, reason: "Deploy blocked: renounced_mint=false." };
           }
 
-          const maxTop10 = Math.max(config.screening.maxTop10Pct ?? 30, 40);
+          const { maxTop10Pct, maxRatTraderPct, maxDevHoldPct } = getEvilPandaThresholds(config.screening);
+          const maxTop10 = maxTop10Pct;
           const top10Pct = gmgnSec?.top_10_holder_rate != null
             ? gmgnSec.top_10_holder_rate * 100
             : tokenInfo?.audit?.top_holders_pct;
@@ -563,12 +565,12 @@ async function runSafetyChecks(name, args) {
             return { pass: false, reason: `Deploy blocked: top10 concentration ${Number(top10Pct).toFixed(1)}% > ${maxTop10}% limit.` };
           }
 
-          const maxRat = Math.max(config.screening.maxRatTraderPct ?? 30, 30);
+          const maxRat = maxRatTraderPct;
           if (gmgnInfo?.rat_trader_pct != null && gmgnInfo.rat_trader_pct > maxRat) {
             return { pass: false, reason: `Deploy blocked: rat_trader_pct ${gmgnInfo.rat_trader_pct}% > ${maxRat}% limit.` };
           }
 
-          const maxDevHold = Math.max(config.screening.maxDevHoldPct ?? 5, 5);
+          const maxDevHold = maxDevHoldPct;
           const devHold = gmgnInfo?.creator_hold_rate ?? gmgnInfo?.dev_hold_rate;
           if (devHold != null && devHold > maxDevHold) {
             return { pass: false, reason: `Deploy blocked: dev/creator hold ${(devHold * 100).toFixed(1)}% > ${maxDevHold}% limit.` };
