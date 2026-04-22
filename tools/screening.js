@@ -313,6 +313,16 @@ export async function getTopCandidates({ limit = 10 } = {}) {
     .slice(0, limit);
 
   let eligible = buildBaseEligible(pools);
+  const evilPandaThresholds = getEvilPandaThresholds(s);
+  const {
+    maxDevHoldPct,
+    maxTop10Pct,
+    maxRatTraderPct,
+    maxBundlerSoftPct,
+    maxBundlerHardPct,
+    minVolumeTrendPct,
+    severeVolumeTrendPct,
+  } = evilPandaThresholds;
 
   if (eligible.length === 0) {
     const relaxedOverrides = getRelaxedEvilPandaOverrides(config.screening);
@@ -396,7 +406,6 @@ export async function getTopCandidates({ limit = 10 } = {}) {
 
     // Dev/creator holding hard filter — dev holding > 5% = danger (EvilPanda: even 1% is red flag)
     // We use 5% as hard cutoff; 1-5% is flagged in prompt as caution.
-    const { maxDevHoldPct, maxTop10Pct, maxRatTraderPct, maxBundlerSoftPct, maxBundlerHardPct, minVolumeTrendPct, severeVolumeTrendPct } = getEvilPandaThresholds(s);
     const maxDevHold = maxDevHoldPct;
     eligible.splice(0, eligible.length, ...eligible.filter((p) => {
       const hold = p.creator_hold_rate ?? p.dev_hold_rate;
