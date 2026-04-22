@@ -125,7 +125,7 @@ Only call this if you need the current price to calculate a specific bin range (
     function: {
       name: "deploy_position",
       description: `Open a new DLMM liquidity position. Executes a real on-chain transaction.
-Strategy and bin parameters are governed by the screener system prompt instructions — follow those exactly.
+Strategy and bin parameters are governed by the screener output's recommended_deploy plan — follow those exact values.
 Single-sided SOL deposit only (amount_y, amount_x=0) unless user specifies otherwise.`,
       parameters: {
         type: "object",

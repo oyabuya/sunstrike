@@ -122,18 +122,22 @@ Before `deploy_position` executes:
 
 ## bins_below Calculation (SCREENER)
 
-Linear formula based on pool volatility (set in screener prompt, `index.js`):
+The screener now computes a single `recommended_deploy` plan per candidate in code.
+The plan is derived from volatility and bin step, then injected into the prompt.
 
 ```
-bins_below = round(100 + (volatility / 5) * 50), clamped to [100, 150]
+bins_below = round((100 + (volatility / 5) * 50) / (bin_step / 100))
+if bin_step >= 50: bins_below *= 1.2
+clamp bins_below to [20, 300]
+bins_above = 10
+strategy = "spot"
 ```
 
-- Low volatility (0) → 100 bins
-- High volatility (5+) → 150 bins
-- Any value in between is valid (continuous, not tiered)
-- Strategy is always `"spot"` (uniform distribution — wide range philosophy)
+- Low volatility still gets a wide range, but the exact width now depends on bin step.
+- High volatility expands the downside buffer further.
+- The screener also has a relaxed fallback pass when strict screening returns no candidates.
+- Strategy is treated as the runtime default for EvilPanda deploys, not as a separate competing policy.
 - Philosophy: be the **final exit liquidity provider**. Wide range = rare OOR = more fee accumulation.
-  At bin_step 80: 100 bins = -80% downside buffer. At bin_step 125: 100 bins = -125% (full floor).
 
 ---
 

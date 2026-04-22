@@ -3,6 +3,7 @@ import { isBlacklisted } from "../token-blacklist.js";
 import { isDevBlocked, getBlockedDevs } from "../dev-blocklist.js";
 import { log } from "../logger.js";
 import { isBaseMintOnCooldown, isPoolOnCooldown } from "../pool-memory.js";
+import { getRelaxedEvilPandaOverrides, scoreEvilPandaCandidate } from "../evilpanda-policy.js";
 
 const FETCH_TIMEOUT_MS = 15_000;
 
@@ -126,8 +127,9 @@ export async function getVolumeTrend(poolAddress) {
  */
 export async function discoverPools({
   page_size = 50,
+  overrides = {},
 } = {}) {
-  const s = config.screening;
+  const s = { ...config.screening, ...overrides };
   // SOL mint — used for post-filter (not API query — API may not support quote_token_mint parameter)
   const SOL_MINT = config.tokens.SOL;
 
@@ -276,6 +278,8 @@ export async function getTopCandidates({ limit = 10 } = {}) {
   const { config } = await import("../config.js");
   let { pools } = await discoverPools({ page_size: 50 });
   const filteredOut = [];
+  let screeningProfile = "strict";
+  let totalScreened = pools.length;
 
   // Exclude pools where the wallet already has an open position
   const { getMyPositions } = await import("./dlmm.js");
@@ -283,7 +287,7 @@ export async function getTopCandidates({ limit = 10 } = {}) {
   const occupiedPools = new Set(positions.map((p) => p.pool));
   const occupiedMints = new Set(positions.map((p) => p.base_mint).filter(Boolean));
 
-  let eligible = pools
+  const buildBaseEligible = (poolList) => poolList
     .filter((p) => {
       if (occupiedPools.has(p.pool)) {
         pushFilteredReason(filteredOut, p, "already have an open position in this pool");
@@ -307,9 +311,20 @@ export async function getTopCandidates({ limit = 10 } = {}) {
     })
     .slice(0, limit);
 
-  if (config.screening.avoidPvpSymbols && eligible.length > 0) {
+  let eligible = buildBaseEligible(pools);
+
+  if (eligible.length === 0) {
+    const relaxedOverrides = getRelaxedEvilPandaOverrides(config.screening);
+    log("screening", `Strict screening returned no candidates — retrying with relaxed EvilPanda fallback ${JSON.stringify(relaxedOverrides)}`);
+    const relaxedDiscovery = await discoverPools({ page_size: 75, overrides: relaxedOverrides }).catch(() => ({ pools: [] }));
+    totalScreened = relaxedDiscovery.pools?.length ?? totalScreened;
+    eligible = buildBaseEligible(relaxedDiscovery.pools || []);
+    screeningProfile = "relaxed";
+  }
+
+  if (s.avoidPvpSymbols && eligible.length > 0) {
     await enrichPvpRisk(eligible);
-    if (config.screening.blockPvpSymbols) {
+    if (s.blockPvpSymbols) {
       const before = eligible.length;
       const pvpRemoved = eligible.filter((p) => p.is_pvp);
       pvpRemoved.forEach((p) => pushFilteredReason(filteredOut, p, "PVP hard filter"));
@@ -367,7 +382,7 @@ export async function getTopCandidates({ limit = 10 } = {}) {
 
     // Dev/creator holding hard filter — dev holding > 5% = danger (EvilPanda: even 1% is red flag)
     // We use 5% as hard cutoff; 1-5% is flagged in prompt as caution.
-    const maxDevHold = config.screening.maxDevHoldPct ?? 5;
+    const maxDevHold = Math.max(s.maxDevHoldPct ?? 5, 5);
     eligible.splice(0, eligible.length, ...eligible.filter((p) => {
       const hold = p.creator_hold_rate ?? p.dev_hold_rate;
       if (hold != null && hold > maxDevHold) {
@@ -379,7 +394,7 @@ export async function getTopCandidates({ limit = 10 } = {}) {
     }));
 
     // Renounced mint hard filter (strict mode) — if data says not renounced, reject.
-    if (config.screening.antiRugStrict && config.screening.requireRenouncedMint) {
+  if (s.antiRugStrict && s.requireRenouncedMint) {
       eligible.splice(0, eligible.length, ...eligible.filter((p) => {
         if (p.renounced_mint === false) {
           log("screening", `Renounced filter: dropped ${p.name} — renounced_mint=false`);
@@ -391,8 +406,8 @@ export async function getTopCandidates({ limit = 10 } = {}) {
     }
 
     // Concentration hard filter (strict mode) — GMGN top10 holder share.
-    if (config.screening.antiRugStrict) {
-      const maxTop10 = config.screening.maxTop10Pct ?? 30;
+    if (s.antiRugStrict) {
+      const maxTop10 = Math.max(s.maxTop10Pct ?? 30, 40);
       eligible.splice(0, eligible.length, ...eligible.filter((p) => {
         const top10Pct = p.gmgn_top10 != null ? p.gmgn_top10 * 100 : null;
         if (top10Pct != null && top10Pct > maxTop10) {
@@ -405,8 +420,8 @@ export async function getTopCandidates({ limit = 10 } = {}) {
     }
 
     // Rat trader hard filter (strict mode) — insider extraction pattern.
-    if (config.screening.antiRugStrict) {
-      const maxRatTrader = config.screening.maxRatTraderPct ?? 30;
+    if (s.antiRugStrict) {
+      const maxRatTrader = Math.max(s.maxRatTraderPct ?? 30, 30);
       eligible.splice(0, eligible.length, ...eligible.filter((p) => {
         if (p.rat_trader_pct != null && p.rat_trader_pct > maxRatTrader) {
           log("screening", `Rat trader filter: dropped ${p.name} — ${p.rat_trader_pct}% > ${maxRatTrader}%`);
@@ -420,8 +435,8 @@ export async function getTopCandidates({ limit = 10 } = {}) {
 
     // Bundler soft filter: < 40% GREEN, 40-60% YELLOW, > 60% RED (hard skip)
   if (eligible.length > 0 && process.env.GMGN_API_KEY) {
-    const maxBundlerSoft = config.screening.maxBundlePct ?? 40;
-    const maxBundlerHard = 65;
+    const maxBundlerSoft = 40;
+    const maxBundlerHard = 60;
     
     for (let i = eligible.length - 1; i >= 0; i--) {
       const bundler = eligible[i].gmgn_bundler_pct ?? 0;
@@ -540,7 +555,7 @@ export async function getTopCandidates({ limit = 10 } = {}) {
     }));
 
     // Rugpull hard filter (strict mode) — never deploy if explicitly flagged.
-    if (config.screening.antiRugStrict) {
+    if (s.antiRugStrict) {
       eligible.splice(0, eligible.length, ...eligible.filter((p) => {
         if (p.is_rugpull === true) {
           log("screening", `Risk filter: dropped ${p.name} — rugpull flagged`);
@@ -560,7 +575,7 @@ export async function getTopCandidates({ limit = 10 } = {}) {
     }
 
     // ATH filter — drop pools where price is too close to ATH
-    const athFilter = config.screening.athFilterPct;
+    const athFilter = s.athFilterPct;
     if (athFilter != null) {
       const threshold = 100 + athFilter; // e.g. -20 → threshold = 80 (price must be <= 80% of ATH)
       const before = eligible.length;
@@ -578,7 +593,7 @@ return true;
 
   // Volume trend filter — skip pools where volume is not trending up
   // Requires volume 1h > 20% vs 24h avg (filter young/mid-vol tokens without momentum)
-  const minVolChange = config.screening.minVolChangePct;
+  const minVolChange = s.minVolChangePct;
   if (minVolChange != null) {
     // Fetch volume trends for all eligible pools in parallel
     const trendResults = await Promise.allSettled(
@@ -631,10 +646,16 @@ return true;
     }
   }
 
+  eligible = eligible
+    .map((p) => ({ ...p, candidate_score: scoreEvilPandaCandidate(p) }))
+    .sort((a, b) => (b.candidate_score ?? 0) - (a.candidate_score ?? 0))
+    .slice(0, limit);
+
   return {
     candidates: eligible,
-    total_screened: pools.length,
+    total_screened: totalScreened,
     filtered_examples: filteredOut.slice(0, 3),
+    screening_profile: screeningProfile,
   };
 }
 

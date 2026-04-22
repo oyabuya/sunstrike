@@ -199,13 +199,8 @@ POOL MEMORY: Past losses or problems → strong skip signal.
 
 DEPLOY RULES:
 - COMPOUNDING: Use the deploy amount from the goal EXACTLY. Do NOT default to a smaller number.
-- bins_below_base = round((100 + (volatility/5)*50) / (bin_step/100)), capped at 300.
-- if bin_step >= 50: bins_below = round(bins_below_base * 1.2) to widen range.
-  else: bins_below = bins_below_base.
-  This maintains a consistent ~100–150% downside buffer regardless of bin_step size.
-  Examples: bin_step=25 vol=0 → 400→300 bins (-75%); bin_step=80 vol=0 → 125 bins (-100%); bin_step=100 vol=0 → 100 bins (-100%).
-- bins_above = 10. Minimal upside buffer to prevent instant OOR on small price pumps.
-- strategy = always "spot". Uniform distribution across bins. Never "bid_ask" for SOL-sided wide positions.
+- Use the exact recommended_deploy values attached to the chosen candidate.
+- Do not invent bins, do not change strategy, do not improvise a new range.
 - Prefer higher fee pools for meme coins — more fee per panic seller.
 - Always pass fees_sol (= global_fees_sol from get_token_holders) when calling deploy_position. The executor enforces the minimum — deploy will be blocked in code if below threshold.
 - Pick ONE pool. Deploy or explain why none qualify.

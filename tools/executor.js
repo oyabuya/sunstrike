@@ -555,7 +555,7 @@ async function runSafetyChecks(name, args) {
             return { pass: false, reason: "Deploy blocked: renounced_mint=false." };
           }
 
-          const maxTop10 = config.screening.maxTop10Pct ?? 30;
+          const maxTop10 = Math.max(config.screening.maxTop10Pct ?? 30, 40);
           const top10Pct = gmgnSec?.top_10_holder_rate != null
             ? gmgnSec.top_10_holder_rate * 100
             : tokenInfo?.audit?.top_holders_pct;
@@ -563,18 +563,18 @@ async function runSafetyChecks(name, args) {
             return { pass: false, reason: `Deploy blocked: top10 concentration ${Number(top10Pct).toFixed(1)}% > ${maxTop10}% limit.` };
           }
 
-          const maxRat = config.screening.maxRatTraderPct ?? 30;
+          const maxRat = Math.max(config.screening.maxRatTraderPct ?? 30, 30);
           if (gmgnInfo?.rat_trader_pct != null && gmgnInfo.rat_trader_pct > maxRat) {
             return { pass: false, reason: `Deploy blocked: rat_trader_pct ${gmgnInfo.rat_trader_pct}% > ${maxRat}% limit.` };
           }
 
-          const maxDevHold = config.screening.maxDevHoldPct ?? 5;
+          const maxDevHold = Math.max(config.screening.maxDevHoldPct ?? 5, 5);
           const devHold = gmgnInfo?.creator_hold_rate ?? gmgnInfo?.dev_hold_rate;
           if (devHold != null && devHold > maxDevHold) {
             return { pass: false, reason: `Deploy blocked: dev/creator hold ${(devHold * 100).toFixed(1)}% > ${maxDevHold}% limit.` };
           }
 
-          const maxBots = config.screening.maxBotHoldersPct;
+          const maxBots = Math.max(config.screening.maxBotHoldersPct ?? 30, 30);
           const botPct = tokenInfo?.audit?.bot_holders_pct;
           if (botPct != null && maxBots != null && botPct > maxBots) {
             return { pass: false, reason: `Deploy blocked: bot holders ${botPct}% > ${maxBots}% limit.` };

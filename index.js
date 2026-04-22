@@ -14,8 +14,10 @@ import { generateBriefing } from "./briefing.js";
 import { getLastBriefingDate, setLastBriefingDate, getTrackedPosition, setPositionInstruction, updatePnlAndCheckExits, queuePeakConfirmation, resolvePendingPeak, queueTrailingDropConfirmation, resolvePendingTrailingDrop } from "./state.js";
 import { getActiveStrategy } from "./strategy-library.js";
 import { recordPositionSnapshot, recallForPool, addPoolNote } from "./pool-memory.js";
-import { checkSmartWalletsOnPool } from "./smart-wallets.js";
+import { checkSmartWalletsOnPool, getSmartWalletCandidatePools } from "./smart-wallets.js";
 import { getTokenNarrative, getTokenInfo } from "./tools/token.js";
+import { getPoolDetail } from "./tools/screening.js";
+import { computeEvilPandaDeployPlan, formatEvilPandaDeployPlan } from "./evilpanda-policy.js";
 
 log("startup", "DLMM LP Agent starting...");
 log("startup", `Mode: ${process.env.DRY_RUN === "true" ? "DRY RUN" : "LIVE"}`);
@@ -527,38 +529,65 @@ export async function runScreeningCycle({ silent = false } = {}) {
     const deployAmount = computeDeployAmount(currentBalance.sol);
     log("cron", `Computed deploy amount: ${deployAmount} SOL (wallet: ${currentBalance.sol} SOL)`);
 
-    // Load active strategy
+    // Load active strategy for display only. EvilPanda runtime policy computes deploy shape.
     const activeStrategy = getActiveStrategy();
     const strategyBlock = activeStrategy
-      ? `ACTIVE STRATEGY: ${activeStrategy.name} — LP: ${activeStrategy.lp_strategy} | bins_above: ${activeStrategy.range?.bins_above ?? 0} (FIXED — never change) | deposit: ${activeStrategy.entry?.single_side === "sol" ? "SOL only (amount_y, amount_x=0)" : "dual-sided"} | best for: ${activeStrategy.best_for}`
-      : `No active strategy — select strategy per STEPS below based on pool volatility. bins_above: 0, SOL only (amount_y, amount_x=0).`;
+      ? `ACTIVE STRATEGY (advisory): ${activeStrategy.name} — LP: ${activeStrategy.lp_strategy} | best for: ${activeStrategy.best_for}`
+      : `No active strategy — EvilPanda runtime policy will compute the deploy shape.`;
 
-    // Fetch top candidates, then recon each sequentially with a small delay to avoid 429s
-    const topCandidates = await getTopCandidates({ limit: 10 }).catch(() => null);
-    const candidates = (topCandidates?.candidates || topCandidates?.pools || []).slice(0, 10);
-    const earlyFilteredExamples = topCandidates?.filtered_examples || [];
-
-    const allCandidates = [];
-    for (const pool of candidates) {
-      const mint = pool.base?.mint;
-      const [smartWallets, narrative, tokenInfo] = await Promise.allSettled([
-        checkSmartWalletsOnPool({ pool_address: pool.pool }),
-        mint ? getTokenNarrative({ mint }) : Promise.resolve(null),
-        mint ? getTokenInfo({ query: mint }) : Promise.resolve(null),
-      ]);
-      allCandidates.push({
-        pool,
-        sw: smartWallets.status === "fulfilled" ? smartWallets.value : null,
-        n: narrative.status === "fulfilled" ? narrative.value : null,
-        ti: tokenInfo.status === "fulfilled" ? tokenInfo.value?.results?.[0] : null,
-        mem: recallForPool(pool.pool),
-      });
-      await new Promise(r => setTimeout(r, 150)); // avoid 429s
+    async function hydrateCandidates(rawPools, { label = "candidates" } = {}) {
+      const hydrated = [];
+      for (const rawPool of rawPools) {
+        const pool = rawPool?.pool ? rawPool : await getPoolDetail({ pool_address: rawPool.pool_address || rawPool.pool }).catch(() => rawPool);
+        const poolAddress = pool?.pool || pool?.pool_address || rawPool?.pool_address || rawPool?.pool;
+        const mint = pool?.base?.mint || rawPool?.base?.mint || rawPool?.base_mint || null;
+        const [smartWallets, narrative, tokenInfo] = await Promise.allSettled([
+          poolAddress ? checkSmartWalletsOnPool({ pool_address: poolAddress }) : Promise.resolve(null),
+          mint ? getTokenNarrative({ mint }) : Promise.resolve(null),
+          mint ? getTokenInfo({ query: mint }) : Promise.resolve(null),
+        ]);
+        hydrated.push({
+          pool,
+          sw: smartWallets.status === "fulfilled" ? smartWallets.value : null,
+          n: narrative.status === "fulfilled" ? narrative.value : null,
+          ti: tokenInfo.status === "fulfilled" ? tokenInfo.value?.results?.[0] : null,
+          mem: poolAddress ? recallForPool(poolAddress) : null,
+          source: label,
+        });
+        await new Promise((r) => setTimeout(r, 150));
+      }
+      return hydrated;
     }
+
+    // Fetch top candidates, then fallback to smart-wallet pools if needed.
+    const topCandidates = await getTopCandidates({ limit: 10 }).catch(() => null);
+    let candidatePools = (topCandidates?.candidates || topCandidates?.pools || []).slice(0, 10);
+    let earlyFilteredExamples = topCandidates?.filtered_examples || [];
+    let candidateSource = topCandidates?.screening_profile || "strict";
+
+    if (candidatePools.length === 0) {
+      let smartWalletFallback = await getSmartWalletCandidatePools({ min_wallets: 2 }).catch(() => null);
+      if (!smartWalletFallback?.pools?.length) {
+        smartWalletFallback = await getSmartWalletCandidatePools({ min_wallets: 1 }).catch(() => null);
+      }
+      if (smartWalletFallback?.pools?.length) {
+        candidatePools = smartWalletFallback.pools.map((p) => ({
+          pool_address: p.pool_address,
+          pool_name: p.pool_name,
+          base_mint: p.base_mint,
+          smart_wallet_signal: p.signal,
+        }));
+        candidateSource = "smart-wallet-fallback";
+        earlyFilteredExamples = [];
+        log("screening", `Smart-wallet fallback recovered ${candidatePools.length} candidate pool(s)`);
+      }
+    }
+
+    const allCandidates = await hydrateCandidates(candidatePools, { label: candidateSource });
 
     // Hard filters after token recon — block launchpads and excessive Jupiter bot holders
     const filteredOut = [];
-    const passing = allCandidates.filter(({ pool, ti }) => {
+    const applyPostReconFilters = (items) => items.filter(({ pool, ti }) => {
       const launchpad = ti?.launchpad ?? null;
       if (launchpad && config.screening.allowedLaunchpads?.length > 0 && !config.screening.allowedLaunchpads.includes(launchpad)) {
         log("screening", `Skipping ${pool.name} — launchpad ${launchpad} not in allow-list`);
@@ -571,7 +600,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
         return false;
       }
       const botPct = ti?.audit?.bot_holders_pct;
-      const maxBotHoldersPct = config.screening.maxBotHoldersPct;
+      const maxBotHoldersPct = Math.max(config.screening.maxBotHoldersPct ?? 30, 30);
       if (botPct != null && maxBotHoldersPct != null && botPct > maxBotHoldersPct) {
         log("screening", `Bot-holder filter: dropped ${pool.name} — bots ${botPct}% > ${maxBotHoldersPct}%`);
         filteredOut.push({ name: pool.name, reason: `bot holders ${botPct}% > ${maxBotHoldersPct}%` });
@@ -579,7 +608,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
       }
       if (config.screening.antiRugStrict) {
         const top10Pct = ti?.audit?.top_holders_pct;
-        const maxTop10Pct = config.screening.maxTop10Pct;
+        const maxTop10Pct = Math.max(config.screening.maxTop10Pct ?? 30, 40);
         if (top10Pct != null && maxTop10Pct != null && top10Pct > maxTop10Pct) {
           log("screening", `Top10 filter: dropped ${pool.name} — top10 ${top10Pct}% > ${maxTop10Pct}%`);
           filteredOut.push({ name: pool.name, reason: `top10 ${top10Pct}% > ${maxTop10Pct}%` });
@@ -590,7 +619,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
           filteredOut.push({ name: pool.name, reason: "renounced_mint=false" });
           return false;
         }
-        const maxRatTraderPct = config.screening.maxRatTraderPct;
+        const maxRatTraderPct = Math.max(config.screening.maxRatTraderPct ?? 30, 30);
         if (pool.rat_trader_pct != null && maxRatTraderPct != null && pool.rat_trader_pct > maxRatTraderPct) {
           log("screening", `Rat trader filter: dropped ${pool.name} — ${pool.rat_trader_pct}% > ${maxRatTraderPct}%`);
           filteredOut.push({ name: pool.name, reason: `rat_trader ${pool.rat_trader_pct}% > ${maxRatTraderPct}%` });
@@ -604,11 +633,27 @@ export async function runScreeningCycle({ silent = false } = {}) {
       }
       return true;
     });
+    let passing = applyPostReconFilters(allCandidates);
+
+    if (passing.length === 0 && candidateSource !== "smart-wallet-fallback") {
+      const smartWalletFallback = await getSmartWalletCandidatePools({ min_wallets: 2 }).catch(() => null);
+      const fallbackPools = smartWalletFallback?.pools?.length
+        ? smartWalletFallback.pools.map((p) => ({
+            pool_address: p.pool_address,
+            pool_name: p.pool_name,
+            base_mint: p.base_mint,
+            smart_wallet_signal: p.signal,
+          }))
+        : [];
+      if (fallbackPools.length > 0) {
+        candidateSource = "smart-wallet-fallback";
+        const fallbackCandidates = await hydrateCandidates(fallbackPools, { label: candidateSource });
+        passing = applyPostReconFilters(fallbackCandidates);
+        log("screening", `Smart-wallet fallback after recon yielded ${passing.length} passing candidate(s)`);
+      }
+    }
 
     if (passing.length === 0) {
-      const examples = filteredOut.slice(0, 3)
-        .map((entry) => `- ${entry.name}: ${entry.reason}`)
-        .join("\n");
       const combined = filteredOut.length > 0 ? filteredOut : earlyFilteredExamples;
       const combinedExamples = combined.slice(0, 3)
         .map((entry) => `- ${entry.name}: ${entry.reason}`)
@@ -626,7 +671,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
     ]);
 
     // Build compact candidate blocks
-    const candidateBlocks = passing.map(({ pool, sw, n, ti, mem }, i) => {
+    const candidateBlocks = passing.map(({ pool, sw, n, ti, mem, source }, i) => {
       const botPct = ti?.audit?.bot_holders_pct ?? "?";
       const top10Pct = ti?.audit?.top_holders_pct ?? "?";
       const feesSol = ti?.global_fees_sol ?? "?";
@@ -635,6 +680,8 @@ export async function runScreeningCycle({ silent = false } = {}) {
       const netBuyers = ti?.stats_1h?.net_buyers;
       const activeBin = activeBinResults[i]?.status === "fulfilled" ? activeBinResults[i].value?.binId : null;
       const volTrend = volumeTrendResults[i]?.status === "fulfilled" ? volumeTrendResults[i].value : null;
+      const deployPlan = computeEvilPandaDeployPlan({ volatility: pool.volatility, binStep: pool.bin_step });
+      const candidateScore = pool.candidate_score ?? 0;
 
       // OKX signals
       const okxParts = [
@@ -669,6 +716,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
 
       const block = [
         `POOL: ${pool.name} (${pool.pool})`,
+        `  screening_score: ${candidateScore}`,
         `  metrics: bin_step=${pool.bin_step}, fee_pct=${pool.fee_pct}%, fee_tvl=${pool.fee_active_tvl_ratio}, vol=$${pool.volume_window}, tvl=$${pool.active_tvl}, volatility=${pool.volatility}, mcap=$${pool.mcap}, organic=${pool.organic_score}${pool.token_age_hours != null ? `, age=${pool.token_age_hours}h` : ""}`,
         `  audit: top10=${top10Pct}%, bots=${botPct}%, fees=${feesSol}SOL${launchpad ? `, launchpad=${launchpad}` : ""}`,
         okxParts ? `  okx: ${okxParts}` : okxUnavailable ? `  okx: unavailable` : null,
@@ -677,9 +725,11 @@ export async function runScreeningCycle({ silent = false } = {}) {
         pool.st_direction ? `  supertrend: ${pool.st_direction}(${pool.st_pct_vs_price}%)${pool.st_entry_ok ? " ✓ entry_ok" : " ⚠ downtrend"}` : null,
         pool.price_vs_ath_pct != null ? `  ath: price_vs_ath=${pool.price_vs_ath_pct}%${pool.top_cluster_trend ? `, top_cluster=${pool.top_cluster_trend}` : ""}` : null,
         `  smart_wallets: ${sw?.in_pool?.length ?? 0} present${sw?.in_pool?.length ? ` → CONFIDENCE BOOST (${sw.in_pool.map(w => w.name).join(", ")})` : ""}`,
+        source === "smart-wallet-fallback" ? `  source: smart-wallet fallback` : null,
         activeBin != null ? `  active_bin: ${activeBin}` : null,
         priceChange != null ? `  1h: price${priceChange >= 0 ? "+" : ""}${priceChange}%, net_buyers=${netBuyers ?? "?"}` : null,
         volTrend ? `  vol_trend: ${volTrend.direction} (${volTrend.trend_pct != null ? (volTrend.trend_pct >= 0 ? "+" : "") + volTrend.trend_pct + "%" : "n/a"} vs prev 6h), avg_6h=$${volTrend.last6h_avg_vol}` : null,
+        `  recommended deploy: ${formatEvilPandaDeployPlan(deployPlan)}`,
         n?.narrative ? `  narrative_untrusted: ${sanitizeUntrustedPromptText(n.narrative, 500)}` : `  narrative_untrusted: none`,
         mem ? `  memory_untrusted: ${sanitizeUntrustedPromptText(mem, 500)}` : null,
       ].filter(Boolean).join("\n");
@@ -699,22 +749,21 @@ STEPS:
 1. Pick the best candidate based on narrative quality, smart wallets, pool metrics, AND vol_trend.
    - Prefer pools with vol_trend=up or flat over vol_trend=down.
    - A pool with vol_trend=down and trend_pct < -50% is a red flag (momentum over).
-2. Call deploy_position with these EXACT parameters:
+2. Call deploy_position with the exact recommended_deploy values from the chosen pool:
    - pool_address: <pool address>
    - amount_y: ${deployAmount}  ← REQUIRED, always pass this exact value
    - amount_x: 0
-   - strategy: "spot"  ← always spot, no exceptions (wide range = uniform distribution)
-   - bins_below: 59  (fixed, always use exactly this value)
-   - bins_above: 10  (fixed, always use exactly this value)
-   Total: 69 bins — must never exceed this to stay under single-tx limit
-   - active_bin: (use pre-fetched value above)
+   - strategy: use the candidate's recommended_deploy.strategy exactly
+   - bins_below: use the candidate's recommended_deploy.bins_below exactly
+   - bins_above: use the candidate's recommended_deploy.bins_above exactly
+   - active_bin: use the pre-fetched value above
 3. Report in this exact format (no tables, no extra sections):
    🚀 DEPLOYED
 
    <pool name>
    <pool address>
 
-   ◎ ${deployAmount} SOL | spot | bin <active_bin>
+   ◎ ${deployAmount} SOL | <strategy> | bin <active_bin>
    Range: bin <active_bin - bins_below> → <active_bin>
    Downside buffer: <negative %>
 
