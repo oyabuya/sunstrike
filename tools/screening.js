@@ -328,7 +328,7 @@ export async function getTopCandidates({ limit = 10 } = {}) {
     const relaxedOverrides = getRelaxedEvilPandaOverrides(config.screening);
     log("screening", `Strict screening returned no candidates — retrying with relaxed EvilPanda fallback ${JSON.stringify(relaxedOverrides)}`);
     const relaxedDiscovery = await discoverPools({ page_size: 75, overrides: relaxedOverrides }).catch(() => ({ pools: [] }));
-    totalScreened = relaxedDiscovery.pools?.length ?? totalScreened;
+    totalScreened = Math.max(totalScreened, relaxedDiscovery.pools?.length ?? 0);
     eligible = buildBaseEligible(relaxedDiscovery.pools || []);
     screeningProfile = "relaxed";
   } else if (eligible.length < Math.max(3, Math.ceil(limit / 2))) {
