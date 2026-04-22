@@ -346,6 +346,26 @@ export async function getTopCandidates({ limit = 10 } = {}) {
     screeningProfile = "balanced";
   }
 
+  if (eligible.length === 0) {
+    const { getSmartWalletCandidatePools } = await import("../smart-wallets.js");
+    let smartWalletFallback = await getSmartWalletCandidatePools({ min_wallets: 2 }).catch(() => null);
+    if (!smartWalletFallback?.pools?.length) {
+      smartWalletFallback = await getSmartWalletCandidatePools({ min_wallets: 1 }).catch(() => null);
+    }
+    if (smartWalletFallback?.pools?.length) {
+      const smartWalletPools = smartWalletFallback.pools.map((p) => ({
+        pool: p.pool_address,
+        name: p.pool_name,
+        base: { mint: p.base_mint, symbol: p.pool_name?.split("/")[0] || null },
+        smart_wallet_signal: p.signal,
+      }));
+      eligible = buildBaseEligible(smartWalletPools);
+      totalScreened = Math.max(totalScreened, smartWalletPools.length);
+      screeningProfile = "smart-wallet-fallback";
+      log("screening", `Smart-wallet fallback recovered ${eligible.length} candidate(s)`);
+    }
+  }
+
   if (s.avoidPvpSymbols && eligible.length > 0) {
     await enrichPvpRisk(eligible);
     if (s.blockPvpSymbols) {
