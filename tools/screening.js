@@ -677,6 +677,7 @@ return true;
 
   return {
     candidates: eligible,
+    total_eligible: eligible.length,
     total_screened: totalScreened,
     filtered_examples: filteredOut.slice(0, 3),
     screening_profile: screeningProfile,
