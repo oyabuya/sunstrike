@@ -1,3 +1,5 @@
+import "./load-env.js";
+import { resolveLiveWalletAddress } from "./wallet-identity.js";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -9,13 +11,15 @@ const u = fs.existsSync(USER_CONFIG_PATH)
   ? JSON.parse(fs.readFileSync(USER_CONFIG_PATH, "utf8"))
   : {};
 
-// Apply wallet/RPC from user-config if not already in env
+// Apply non-secret wallet/RPC settings from user-config if not already in env.
 if (u.rpcUrl)    process.env.RPC_URL            ||= u.rpcUrl;
-if (u.walletKey) process.env.WALLET_PRIVATE_KEY ||= u.walletKey;
 if (u.llmModel)  process.env.LLM_MODEL          ||= u.llmModel;
 if (u.llmBaseUrl) process.env.LLM_BASE_URL      ||= u.llmBaseUrl;
 if (u.llmApiKey)  process.env.LLM_API_KEY       ||= u.llmApiKey;
 if (u.dryRun !== undefined) process.env.DRY_RUN ||= String(u.dryRun);
+
+// Derive the dedicated public identity when omitted and reject explicit key/address mismatches.
+resolveLiveWalletAddress({ required: process.env.DRY_RUN === "false" });
 
 // A missing or mistyped mode must never turn a read-only run into a live run.
 // Live execution requires two explicit local settings, independent of the agent.
@@ -168,7 +172,9 @@ export const config = {
   },
 };
 
-if (process.env.DRY_RUN === "false") {
+export function assertLiveConfiguration() {
+  resolveLiveWalletAddress({ required: true });
+  if (process.env.SUNSTRIKE_LIVE_ENABLED !== "true") throw new Error("Live mode blocked: SUNSTRIKE_LIVE_ENABLED must be true");
   const missing = [];
   if (!process.env.SUNSTRIKE_LIVE_WALLET) missing.push("SUNSTRIKE_LIVE_WALLET");
   if (!process.env.WALLET_PRIVATE_KEY) missing.push("WALLET_PRIVATE_KEY");
@@ -196,6 +202,8 @@ if (process.env.DRY_RUN === "false") {
   }
   if (missing.length) throw new Error(`Live startup blocked by readiness gates: ${missing.join(", ")}`);
 }
+
+if (process.env.DRY_RUN === "false") assertLiveConfiguration();
 
 /**
  * Compute the optimal deploy amount for a given wallet balance.

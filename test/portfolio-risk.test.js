@@ -151,3 +151,15 @@ test("USD sizing enforces per-position cap and leaves liquid reserve", () => {
   assert.equal(validateNewPosition({ amountSol: 0.21, solPrice: 100, walletUsd: 100, risk }).pass, false);
   assert.match(validateNewPosition({ amountSol: 0.2, solPrice: 100, walletUsd: 30, risk }).reason, /liquid reserve/);
 });
+
+test('SOL appreciation above budget does not block; initial equity still anchors loss cap', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sunstrike-appreciation-'));
+  const statePath = path.join(dir, 'risk.json');
+  try {
+    initializePortfolioRiskState({ ...fresh(101), expectedWallet: 'DEDICATED', risk, statePath });
+    assert.equal(checkPortfolioRisk({ ...fresh(105), expectedWallet: 'DEDICATED', risk, statePath }).allowed, true);
+    const loss = checkPortfolioRisk({ ...fresh(81), expectedWallet: 'DEDICATED', risk, statePath });
+    assert.equal(loss.lpLossUsd, 20);
+    assert.equal(loss.tripped, true);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});

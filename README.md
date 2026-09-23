@@ -120,6 +120,8 @@ Create `.env`:
 
 ```env
 WALLET_PRIVATE_KEY=your_base58_private_key
+# Optional: auto-derived from WALLET_PRIVATE_KEY if omitted; if set, it must match.
+SUNSTRIKE_LIVE_WALLET=
 RPC_URL=https://mainnet.helius-rpc.com/?api-key=YOUR_KEY
 OPENROUTER_API_KEY=sk-or-...
 HELIUS_API_KEY=your_helius_key          # for wallet balance lookups
@@ -133,9 +135,9 @@ SUNSTRIKE_LIVE_ENABLED=false
 
 > Never put your private key or API keys in `user-config.json` — use `.env` only. Both files are gitignored.
 
-For the September 2026 restart, use a new dedicated wallet. Put its private key only in the VPS `.env`, restrict that file to the service account (`chmod 600 .env`), and never send the key in chat. `OPENROUTER_API_KEY` is for model analysis and tool decisions; it cannot by itself trade. The `RPC_URL` and `HELIUS_API_KEY` support wallet/chain reads, while `JUPITER_API_KEY` supports post-close swaps. Telegram credentials are needed for bot reports and control. `LPAGENT_API_KEY` and `GMGN_API_KEY` are optional enrichment; GMGN additionally needs `gmgn-cli`. Check the provider model slug and tool-call behavior before relying on the agent. The current default is `openai/gpt-4.1-mini`.
+For the September 2026 restart, use a new dedicated wallet. Put its private key only in the VPS `.env`, restrict that file to the service account (`chmod 600 .env`), and never send the key in chat. Sunstrike derives the public address from that key; `SUNSTRIKE_LIVE_WALLET` is optional and, when set, must match it. `OPENROUTER_API_KEY` is for model analysis and tool decisions; it cannot by itself trade. The `RPC_URL` and `HELIUS_API_KEY` support wallet/chain reads, while `JUPITER_API_KEY` supports post-close swaps. Telegram credentials are needed for bot reports and control. `LPAGENT_API_KEY` and `GMGN_API_KEY` are optional enrichment; GMGN additionally needs `gmgn-cli`. Check the provider model slug and tool-call behavior before relying on the agent. The current default is `openai/gpt-4.1-mini`.
 
-The owner set a **$100 starting capital** and **$20 maximum total test loss**. These are policy limits, not yet an enforced wallet-level circuit breaker. Keep both live flags off until portfolio valuation, cumulative loss checks, and stop alerts are implemented and tested. The historical per-position stop loss does not enforce the $20 cap.
+The owner set a **$100 starting capital** and **$20 maximum total test loss**. Live entry requires a wallet-bound risk ledger and fresh wallet/position snapshots; the code blocks entry on a missing, stale, mismatched, or over-limit snapshot. Keep both live flags off until the funded wallet is verified, the ledger is initialized, and the remaining live checks pass. The circuit breaker cannot guarantee a fill or cap losses during provider outages or rapid price moves.
 
 For a low-cost model trial, set `managementModel`, `screeningModel`, and `generalModel` to `openai/gpt-6-luna` in `user-config.json`. It is newly released and must pass an authenticated dry-run tool-call and report-format check before use for decisions. The code's fallback model is `openai/gpt-4.1-mini`; unlike the primary model, the fallback is only attempted for certain transient provider errors. Monitor actual OpenRouter usage and report accuracy rather than assuming the model price alone makes the strategy profitable.
 
@@ -639,3 +641,16 @@ discord-listener/
 This software is provided as-is, with no warranty. Running an autonomous trading agent carries real financial risk — you can lose funds. Always start with `DRY_RUN=true` to verify behavior before going live. Never deploy more capital than you can afford to lose. This is not financial advice.
 
 The authors are not responsible for any losses incurred through use of this software.
+
+### Telegram runtime mode
+
+Authorized Telegram users can send `/mode`, `/dry_run`, or `/live` directly.
+`/live` requires `SUNSTRIKE_LIVE_ENABLED=true`, valid provider credentials, a
+wallet-bound portfolio ledger, a fresh wallet/LP snapshot, sufficient SOL, and
+an untripped loss breaker. Initialize the ledger once using
+`DRY_RUN=true node scripts/init-portfolio-risk.js`; never delete it to reset losses.
+Busy or expired mode commands are rejected; resend after the operation finishes.
+Mode changes last for the current process. Restart follows `.env` (keep
+`DRY_RUN=true` for a safe restart). `/dry_run` does not close existing positions
+and suspends real management transactions. The VPS service template is
+`deploy/sunstrike.service`.

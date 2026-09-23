@@ -1,4 +1,4 @@
-import "dotenv/config";
+import "../load-env.js";
 import fs from "node:fs";
 import { scheduleInterval } from "../interval-task.js";
 import { config } from "../config.js";

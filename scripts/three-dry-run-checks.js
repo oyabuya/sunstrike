@@ -1,4 +1,4 @@
-import 'dotenv/config';
+import '../load-env.js';
 import fs from 'node:fs';
 import { runScreeningCycle } from '../index.js';
 if (process.env.DRY_RUN !== 'true' || process.env.SUNSTRIKE_LIVE_ENABLED === 'true') {

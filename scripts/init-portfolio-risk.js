@@ -1,11 +1,10 @@
-import "dotenv/config";
+import "../load-env.js";
+import { resolveLiveWalletAddress } from "../wallet-identity.js";
 
 if (process.env.DRY_RUN !== "true") {
   throw new Error("Run this read-only initializer with DRY_RUN=true; it never signs transactions.");
 }
-if (!process.env.SUNSTRIKE_LIVE_WALLET) {
-  throw new Error("SUNSTRIKE_LIVE_WALLET must contain the dedicated wallet's public address.");
-}
+resolveLiveWalletAddress({ required: true });
 
 const [{ config }, { getWalletBalances }, { getMyPositions }, { initializePortfolioRiskState }] = await Promise.all([
   import("../config.js"),

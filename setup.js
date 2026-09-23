@@ -8,6 +8,7 @@ import readline from "readline";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { deriveWalletAddress } from "./wallet-identity.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CONFIG_PATH = path.join(__dirname, "user-config.json");
@@ -163,8 +164,10 @@ const openrouterKey = await ask(
 
 const walletKey = await ask(
   "Wallet private key (base58)",
-  alreadySet(ev("WALLET_PRIVATE_KEY", existingConfig.walletKey || ""))
+  alreadySet(ev("WALLET_PRIVATE_KEY", ""))
 );
+const walletKeyForEnv = walletKey.startsWith("***") ? ev("WALLET_PRIVATE_KEY", "") : walletKey;
+const liveWalletAddress = walletKeyForEnv ? deriveWalletAddress(walletKeyForEnv) : ev("SUNSTRIKE_LIVE_WALLET", "");
 
 const rpcUrl = await ask(
   "RPC URL",
@@ -363,6 +366,7 @@ const envMap = {
   ...existingEnv,
   ...(isKept(openrouterKey) ? {} : { OPENROUTER_API_KEY: openrouterKey }),
   ...(isKept(walletKey)     ? {} : { WALLET_PRIVATE_KEY: walletKey }),
+  ...(liveWalletAddress     ? { SUNSTRIKE_LIVE_WALLET: liveWalletAddress } : {}),
   ...(rpcUrl                ? { RPC_URL: rpcUrl } : {}),
   ...(isKept(heliusKey)     ? {} : { HELIUS_API_KEY: heliusKey }),
   ...(isKept(telegramToken) ? {} : { TELEGRAM_BOT_TOKEN: telegramToken }),
@@ -398,6 +402,7 @@ const userConfig = {
 
 // Remove legacy key if present
 delete userConfig.emergencyPriceDropPct;
+delete userConfig.walletKey;
 
 fs.writeFileSync(CONFIG_PATH, JSON.stringify(userConfig, null, 2));
 

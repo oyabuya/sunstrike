@@ -4,7 +4,7 @@
  * Direct tool invocation with JSON output. Agent-native.
  */
 
-import "dotenv/config";
+import "./load-env.js";
 import { parseArgs } from "util";
 import os from "os";
 import fs from "fs";

@@ -1,6 +1,7 @@
+import { switchRuntimeMode } from "./runtime-mode.js";
+import "./load-env.js";
 import { assertScreeningInputs } from "./screening-readiness.js";
 import { scheduleInterval } from "./interval-task.js";
-import "dotenv/config";
 import cron from "node-cron";
 import readline from "readline";
 import path from "node:path";
@@ -65,6 +66,9 @@ function buildPrompt() {
 //  CRON DEFINITIONS
 // ═══════════════════════════════════════════
 let _cronTasks = [];
+let _modeChanging = false;
+let _pnlPollBusy = false;
+const commandStartedAt = Math.floor(Date.now() / 1000);
 let _managementBusy = false; // prevents overlapping management cycles
 let _screeningBusy = false;  // prevents overlapping screening cycles
 let _healthCheckBusy = false; // prevents overlapping health check cycles
@@ -217,7 +221,7 @@ function stopCronJobs() {
 }
 
 export async function runManagementCycle({ silent = false } = {}) {
-  if (_managementBusy) return null;
+  if (_modeChanging || _managementBusy) return null;
   _managementBusy = true;
   timers.managementLastRun = Date.now();
   log("cron", "Starting management cycle");
@@ -492,7 +496,7 @@ After executing, write a brief one-line result per position.
 }
 
 export async function runScreeningCycle({ silent = false } = {}) {
-  if (_screeningBusy) {
+  if (_modeChanging || _screeningBusy) {
     log("cron", "Screening skipped — previous cycle still running");
     return null;
   }
@@ -843,7 +847,7 @@ export function startCronJobs() {
   const screenTask = scheduleInterval(config.schedule.screeningIntervalMin, () => runScreeningCycle(), (error) => log("cron_error", `Screening timer failed: ${error.message}`));
 
   const healthTask = scheduleInterval(config.schedule.healthCheckIntervalMin, async () => {
-    if (_healthCheckBusy) return;
+    if (_modeChanging || _healthCheckBusy) return;
     _healthCheckBusy = true;
     log("cron", "Starting health check");
     try {
@@ -870,9 +874,8 @@ Summarize the current portfolio health, total fees earned, and performance of al
   }, { timezone: 'UTC' });
 
   // Lightweight 30s PnL poller — updates trailing TP state between management cycles, no LLM
-  let _pnlPollBusy = false;
   const pnlPollInterval = setInterval(async () => {
-    if (_managementBusy || _screeningBusy || _pnlPollBusy) return;
+    if (_modeChanging || _managementBusy || _screeningBusy || _pnlPollBusy) return;
     _pnlPollBusy = true;
     try {
       const [result, balance] = await Promise.all([
@@ -1029,6 +1032,31 @@ async function drainTelegramQueue() {
 async function telegramHandler(msg) {
   const text = msg?.text?.trim();
   if (!text) return;
+  const modeCommand = text.match(/^\/(live|dry_run|mode)(?:@[A-Za-z0-9_]+)?$/i);
+  if (modeCommand) {
+    const command = modeCommand[1].toLowerCase();
+    if (command === "mode") {
+      await sendMessage(`Mode: ${process.env.DRY_RUN === "true" ? "DRY_RUN" : "LIVE"}. /dry_run atau /live. Restart mengikuti .env.`);
+      return;
+    }
+    if (!Number.isFinite(msg.date) || msg.date < commandStartedAt || Date.now() / 1000 - msg.date > 120) {
+      await sendMessage("Perintah mode kedaluwarsa. Kirim ulang /live atau /dry_run.");
+      return;
+    }
+    if (_modeChanging || _managementBusy || _screeningBusy || _healthCheckBusy || _pnlPollBusy || busy) {
+      await sendMessage("Bot sedang menjalankan operasi. Kirim ulang perintah mode setelah selesai.");
+      return;
+    }
+    _modeChanging = true;
+    try {
+      await sendMessage(await switchRuntimeMode(command === "live" ? "LIVE" : "DRY_RUN"));
+    } catch (error) {
+      await sendMessage(`Mode tidak berubah: ${error.message}`);
+    } finally {
+      _modeChanging = false;
+    }
+    return;
+  }
   if (_managementBusy || _screeningBusy || busy) {
     if (_telegramQueue.length < 5) {
       _telegramQueue.push(msg);
@@ -1188,7 +1216,9 @@ if (isDirectRun && isTTY) {
 
     startupCandidates = candidates;
 
-    console.log(`Wallet:    ${wallet.sol} SOL  ($${wallet.sol_usd})  |  SOL price: $${wallet.sol_price}`);
+    console.log(wallet.error
+      ? "Wallet:    balance unavailable (lookup failed; value is unknown)"
+      : `Wallet:    ${wallet.sol} SOL  ($${wallet.sol_usd})  |  SOL price: $${wallet.sol_price}`);
     console.log(`Positions: ${positions.total_positions} open\n`);
 
     if (positions.total_positions > 0) {
@@ -1284,7 +1314,9 @@ Commands:
     if (input === "/status") {
       await runBusy(async () => {
         const [wallet, positions] = await Promise.all([getWalletBalances(), getMyPositions({ force: true })]);
-        console.log(`\nWallet: ${wallet.sol} SOL  ($${wallet.sol_usd})`);
+        console.log(wallet.error
+          ? "\nWallet: balance unavailable (lookup failed; value is unknown)"
+          : `\nWallet: ${wallet.sol} SOL  ($${wallet.sol_usd})`);
         console.log(`Positions: ${positions.total_positions}`);
         for (const p of positions.positions) {
           const status = p.in_range ? "in-range ✓" : "OUT OF RANGE ⚠";
@@ -1431,6 +1463,7 @@ Focus on: hold duration, entry/exit timing, what win rates look like, whether sc
   maybeRunMissedBriefing().catch(() => { });
   startPolling(telegramHandler);
   (async () => {
+    busy = true;
     try {
       const startupStep3 = process.env.DRY_RUN === "true"
         ? `3. Ignore wallet SOL threshold in dry run: get_top_candidates then simulate deploy ${DEPLOY} SOL.`
@@ -1441,6 +1474,9 @@ STARTUP CHECK
       `, config.llm.maxStepsScreener, [], "SCREENER", config.llm.screeningModel);
     } catch (e) {
       log("startup_error", e.message);
+    } finally {
+      busy = false;
+      await drainTelegramQueue();
     }
   })();
 }

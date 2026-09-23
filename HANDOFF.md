@@ -22,10 +22,11 @@ Terakhir diperbarui: **2026-09-24 WIB**. Baca `AGENTS.md`, dokumen ini, `RESTART
 - Telegram `@Sunstrike_Bot` sudah dikonfigurasi dan pengujian getMe/getUpdates/sendMessage sebelumnya berhasil. Tidak ada polling perintah Telegram/service baru yang dijalankan.
 - Luna `openai/gpt-6-luna` dipakai untuk screening/management/general; fallback provider tertentu `openai/gpt-4.1-mini`. Jev hanya shadow scoring dry-run, bukan pengendali hard gate atau transaksi.
 - Canary config lokal disetel `spot`, `maxPositions=1`, `autoCompoundEnabled=false`; sizing yang diuji membatasi posisi dan eksposur serentak pada $20 serta menyisakan reserve cair $15.
-- Pemilik mengonfirmasi wallet dedicated sudah dimasukkan ke `.env` dan API Jupiter sedang disiapkan. `.env` tidak dibuka. Runtime initializer belum melihat `SUNSTRIKE_LIVE_WALLET` dengan nama persis itu; ledger belum bisa diikat ke alamat wallet.
-- Pemilik melaporkan saldo wallet $100. Snapshot dari wallet yang dipilih runtime menunjukkan 0 posisi dan **0 SOL / $0**, sehingga itu bukan bukti saldo wallet dedicated yang dilaporkan; hentikan pemakaian alamat runtime tersebut sampai pemetaan wallet cocok.
-- Smoke test menolak entry sebelum screening kandidat karena ukuran terhitung di bawah minimum 0,01 SOL. Tidak ada transaksi.
-- `WALLET_PRIVATE_KEY` tersedia setelah `dotenv` memuat konfigurasi, tetapi `SUNSTRIKE_LIVE_WALLET` tidak ada di environment runtime. Ledger risiko belum dibuat. API Jupiter tidak diperiksa langsung.
+- Pemilik melaporkan wallet dedicated berisi $100 dan API Jupiter sedang disiapkan. `.env` tidak dibuka. Pemeriksaan runtime tanpa menampilkan nilainya menemukan `WALLET_PRIVATE_KEY` ada dan valid, tetapi `SUNSTRIKE_LIVE_WALLET` tidak diset. Setup wizard dan contoh manual README sebelumnya memang tidak meminta variabel itu.
+- Kode kini memuat `.env` relatif ke root repo dan menurunkan alamat publik dari private key bila variabel alamat kosong; alamat eksplisit yang tidak cocok diblokir. Wallet identity sudah terikat tanpa mencatat alamat/key ke artefak tes.
+- Snapshot Helius terbaru untuk wallet hasil derivasi sukses, dengan **0 SOL, $0 SOL value, $0 USDC, $0 total USD**; posisi terbuka 0. Ini berbeda dari $100 yang dilaporkan pemilik dan menunjukkan key yang dimuat menunjuk wallet tanpa saldo terindeks. Pembacaan RPC klasik sebelumnya juga menemukan 0 SOL/token account. Jangan mulai live sampai key lokal dipastikan pasangan wallet yang didanai.
+- `scripts/init-portfolio-risk.js` dijalankan dalam DRY_RUN; initializer menolak membuat ledger karena equity pada/bawah $80 (modal $100 dikurangi loss cap $20). Tidak ada file ledger dibuat dan tidak ada transaksi.
+- Error saldo/provider kini ditampilkan sebagai nilai tidak diketahui, bukan saldo nol yang valid. API Jupiter tidak diperiksa langsung dan tidak ada service/VPS yang diaktifkan.
 - Tidak ada service yang diaktifkan dan tidak ada perubahan yang dikirim ke VPS.
 
 ## Bukti tiga dry run tambahan
@@ -76,21 +77,21 @@ Run: **2026-09-23 17:37:30–17:40:50 UTC**, yaitu **24 September 00:37:30–00:
 
 ## Verifikasi terakhir
 
-Pada checkout lokal: **9/9 suite tes lulus**, syntax check semua file JS yang disentuh dan `git diff --check` lulus. Tes VPS lama tetap 16/16 setelah `fbbb711`, sebelum patch ini.
+Pada checkout lokal: **10/10 suite tes lulus**, syntax check semua file JS yang disentuh dan `git diff --check` lulus. Tes VPS lama tetap 16/16 setelah `fbbb711`, sebelum patch ini. Runtime probe dari `/tmp` membuktikan loader mengambil `.env` repo dan mengikat alamat hasil derivasi tanpa mencetak nilainya.
 
 ```bash
 node --test test/*.test.js
 ```
 
-Suite lokal mencakup startup gate, wallet/risk state, restart latch, pemisahan biaya API, campaign scope, dan fail-closed risk fields. Satu smoke cycle jaringan mencapai provider tetapi berhenti di gate saldo $0; runner tiga siklus sandbox gagal saat fetch dan dihentikan setelah dua percobaan. Tidak ada transaksi. Ini tidak membuktikan profit atau kesiapan live.
+Suite lokal mencakup startup gate, wallet/risk state, restart latch, pemisahan biaya API, campaign scope, fail-closed risk fields, dan derivasi/pencocokan wallet. Snapshot Helius terbaru valid tetapi saldo wallet hasil derivasi $0; initializer read-only menolak ledger pada gate equity $80. Tidak ada transaksi atau ledger baru. Ini tidak membuktikan profit atau kesiapan live.
 
 Arsip April tetap berisi **871 action rows**, 29 deploy sukses, 29 close sukses, satu close gagal, satu claim sukses, dan 28 hasil PnL bersih tercatat **−$5,33**. Angka ini arsip pembanding; tidak mengunci campaign baru. Rekonsiliasi 104 signature opsional untuk audit sejarah dan tidak perlu selesai sebelum LP baru.
 
 ## Pekerjaan berikutnya — prioritas
 
-1. Pastikan runtime melihat alamat publik melalui `SUNSTRIKE_LIVE_WALLET` dan wallet memiliki equity modal serta SOL operasional; snapshot terakhir menunjukkan saldo $0.
-2. Setelah alamat publik dan saldo tersedia, jalankan `DRY_RUN=true node scripts/init-portfolio-risk.js`. Script hanya membaca wallet/LP dan menolak state bila equity belum memadai atau masih ada LP terbuka.
-3. Pastikan API Jupiter siap sesuai pemilik, lalu ulangi 2–3 dry run setelah wallet memiliki SOL untuk entry dan reserve; arsipkan hasil sebelum menilai canary.
+1. Cocokkan alamat wallet yang diturunkan dari key `.env` dengan wallet yang berisi $100. Jangan kirim key ke chat; bila alamat berbeda, perbaiki `WALLET_PRIVATE_KEY` lokal agar menunjuk wallet funded.
+2. Setelah wallet yang benar terpilih dan memiliki equity/SOL operasional, jalankan `DRY_RUN=true node scripts/init-portfolio-risk.js`. Script hanya membaca wallet/LP dan menolak ledger bila equity tidak memadai atau ada LP terbuka.
+3. Pastikan API Jupiter siap sesuai pemilik, lalu ulangi 2–3 dry run setelah saldo wallet benar terbaca; arsipkan hasil sebelum menilai canary.
 4. Rekonsiliasi April dan invoice API adalah audit terpisah, bukan prasyarat LP baru. Source belum disinkronkan ke VPS dan service tetap nonaktif.
 
 ## Aturan kerja dan rahasia
@@ -100,3 +101,12 @@ Arsip April tetap berisi **871 action rows**, 29 deploy sukses, 29 close sukses,
 - Key Jupiter historis yang tertanam di source dianggap terekspos dan harus diganti sebelum penggunaan live.
 - Model, narrative, pool memory dan metadata tidak boleh melonggarkan hard gate. Jev tetap shadow sampai ada bukti hasil.
 - Tidak perlu menjalankan ulang bot untuk perubahan dokumentasi ini. Saat melanjutkan, periksa status aktual; semua status di atas adalah hasil verifikasi sesi terakhir.
+
+## Update sesi kontrol Telegram
+
+- Probe VPS terbaru: Helius RPC HTTP 200, 0,880118 SOL; Helius Wallet API HTTP 200, $100,607. Wallet VPS cocok dengan key operator. Diagnosis saldo nol sebelumnya berlaku untuk konfigurasi lokal, bukan wallet VPS. Credential lokal tidak disalin.
+- Jupiter key VPS belum tersedia pada probe; pemilik diminta memasangnya langsung di `.env`. LIVE belum dapat diklaim siap.
+- `/mode`, `/dry_run`, `/live` menjadi perintah deterministik di handler Telegram terautentikasi. Transisi ditolak selama operasi berjalan atau perintah kedaluwarsa. LIVE memeriksa konfigurasi dan snapshot risiko segar; mode berlaku sampai restart, lalu mengikuti `.env`.
+- Saldo di atas $100 tidak lagi dianggap tambahan deployment budget atau alasan memblokir keuntungan. Batas posisi/eksposur tetap $20; loss dihitung dari nilai tertinggi antara modal kebijakan $100 dan equity awal ledger. Kerugian maksimum $20 tetap latch.
+- Loader `.env` root repo dan derivasi identitas wallet dari perubahan sesi sebelumnya disertakan. Respons saldo Helius malformed ditolak sebagai unknown.
+- Verifikasi lokal: 11/11 suite berhasil; syntax index/config dan diff check berhasil. Deployment dan status service dicatat setelah langkah operasional selesai.

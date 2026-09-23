@@ -422,6 +422,7 @@ async function executeToolNow(name, args) {
         if (!args.skip_swap && result.base_mint) {
           try {
             const balances = await getWalletBalances({});
+            if (balances?.error) throw new Error("wallet balance lookup failed; swap amount is unknown");
             const token = balances.tokens?.find(t => t.mint === result.base_mint);
             if (token && token.usd >= 0.10) {
               log("executor", `Auto-swapping ${token.symbol || result.base_mint.slice(0, 8)} ($${token.usd.toFixed(2)}) back to SOL`);
@@ -440,6 +441,7 @@ async function executeToolNow(name, args) {
       } else if (name === "claim_fees" && config.management.autoSwapAfterClaim && result.base_mint) {
         try {
           const balances = await getWalletBalances({});
+          if (balances?.error) throw new Error("wallet balance lookup failed; swap amount is unknown");
           const token = balances.tokens?.find(t => t.mint === result.base_mint);
           if (token && token.usd >= 0.10) {
             log("executor", `Auto-swapping claimed ${token.symbol || result.base_mint.slice(0, 8)} ($${token.usd.toFixed(2)}) back to SOL`);

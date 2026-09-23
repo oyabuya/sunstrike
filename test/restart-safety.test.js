@@ -4,6 +4,8 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import bs58 from "bs58";
+import { Keypair } from "@solana/web3.js";
 
 function run(source, overrides = {}) {
   const env = { ...process.env, DRY_RUN: "true", SUNSTRIKE_LIVE_ENABLED: "false", ...overrides };
@@ -31,12 +33,13 @@ test("an invalid mode is coerced to dry run", () => {
 test("live startup requires an initialized state bound to the dedicated wallet", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sunstrike-startup-risk-"));
   const statePath = path.join(dir, "portfolio-risk.json");
+  const wallet = Keypair.generate();
   const liveEnv = {
     DRY_RUN: "false",
     SUNSTRIKE_LIVE_ENABLED: "true",
-    SUNSTRIKE_LIVE_WALLET: "DEDICATED",
+    SUNSTRIKE_LIVE_WALLET: wallet.publicKey.toBase58(),
     SUNSTRIKE_PORTFOLIO_STATE_PATH: statePath,
-    WALLET_PRIVATE_KEY: "not-a-real-key",
+    WALLET_PRIVATE_KEY: bs58.encode(wallet.secretKey),
     RPC_URL: "https://rpc.invalid",
     HELIUS_API_KEY: "configured",
     JUPITER_API_KEY: "configured",

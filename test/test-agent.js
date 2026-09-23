@@ -3,7 +3,7 @@
  * Run: DRY_RUN=true node test/test-agent.js
  */
 
-import "dotenv/config";
+import "../load-env.js";
 import { agentLoop } from "../agent.js";
 
 async function main() {

@@ -47,13 +47,13 @@ export async function getWalletBalances() {
   try {
     walletAddress = getWallet().publicKey.toString();
   } catch {
-    return { wallet: null, sol: 0, sol_price: 0, sol_usd: 0, usdc: 0, tokens: [], total_usd: 0, error: "Wallet not configured" };
+    return { wallet: null, sol: null, sol_price: null, sol_usd: null, usdc: null, tokens: null, total_usd: null, error: "Wallet not configured" };
   }
 
   const HELIUS_KEY = process.env.HELIUS_API_KEY;
   if (!HELIUS_KEY) {
     log("wallet_error", "HELIUS_API_KEY not set in .env");
-    return { wallet: walletAddress, sol: 0, sol_price: 0, sol_usd: 0, usdc: 0, tokens: [], total_usd: 0, error: "Helius API key missing" };
+    return { wallet: walletAddress, sol: null, sol_price: null, sol_usd: null, usdc: null, tokens: null, total_usd: null, error: "Helius API key missing" };
   }
 
   try {
@@ -69,11 +69,16 @@ export async function getWalletBalances() {
     if (data.totalUsdValue == null || !Number.isFinite(totalUsdValue) || totalUsdValue < 0) {
       throw new Error("Helius wallet USD valuation is missing or invalid");
     }
-    const balances = data.balances || [];
+    if (!Array.isArray(data.balances) || data.balances.some(b =>
+      typeof b.mint !== "string" || !Number.isFinite(b.balance) || b.balance < 0 ||
+      (b.usdValue != null && (!Number.isFinite(b.usdValue) || b.usdValue < 0)))) {
+      throw new Error("Helius wallet balances are missing or invalid");
+    }
+    const balances = data.balances;
 
     // ─── Find SOL and USDC ────────────────────────────────────
-    const solEntry = balances.find(b => b.mint === config.tokens.SOL || b.symbol === "SOL");
-    const usdcEntry = balances.find(b => b.mint === config.tokens.USDC || b.symbol === "USDC");
+    const solEntry = balances.find(b => b.mint === config.tokens.SOL);
+    const usdcEntry = balances.find(b => b.mint === config.tokens.USDC);
 
     const solBalance = solEntry?.balance || 0;
     const solPrice = solEntry?.pricePerToken || 0;
@@ -102,12 +107,12 @@ export async function getWalletBalances() {
     log("wallet_error", error.message);
     return {
       wallet: walletAddress,
-      sol: 0,
-      sol_price: 0,
-      sol_usd: 0,
-      usdc: 0,
-      tokens: [],
-      total_usd: 0,
+      sol: null,
+      sol_price: null,
+      sol_usd: null,
+      usdc: null,
+      tokens: null,
+      total_usd: null,
       error: error.message,
     };
   }

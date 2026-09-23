@@ -1,0 +1,18 @@
+[Unit]
+Description=Sunstrike Telegram DLMM bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/projects/sunstrike
+Environment=PATH=/home/ubuntu/.nvm/versions/node/v24.15.0/bin:/usr/local/bin:/usr/bin:/bin
+Environment=NODE_OPTIONS=--dns-result-order=ipv4first
+ExecStart=/home/ubuntu/.nvm/versions/node/v24.15.0/bin/node index.js
+Restart=on-failure
+RestartSec=10
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

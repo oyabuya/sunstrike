@@ -46,7 +46,6 @@ export function initializePortfolioRiskState({ balance, positions, expectedWalle
   if (fs.existsSync(target)) throw new Error("portfolio risk state already exists; refusing to reset or overwrite its loss history");
   const snapshot = buildPortfolioSnapshot(balance, positions, now);
   if (snapshot.positions !== 0) throw new Error("risk state must be initialized with no open LP positions");
-  if (snapshot.equity_usd > capitalBudgetUsd + 0.01) throw new Error("initial equity exceeds the approved capital budget");
   if (capitalBudgetUsd - snapshot.equity_usd >= maxCumulativeLossUsd) {
     throw new Error("initial equity is already at or below the portfolio loss limit");
   }
@@ -124,7 +123,7 @@ export function checkPortfolioRisk({ balance, positions, expectedWallet, risk, s
   } catch (error) {
     return { allowed: false, reason: error.message };
   }
-  const lpLossUsd = Math.max(0, capitalBudgetUsd - snapshot.equity_usd);
+  const lpLossUsd = Math.max(0, Math.max(capitalBudgetUsd, state.initial_snapshot.equity_usd) - snapshot.equity_usd);
   if (!state.tripped && lpLossUsd >= maxCumulativeLossUsd) {
     state.tripped = true;
     state.tripped_at = new Date(now).toISOString();
@@ -135,9 +134,6 @@ export function checkPortfolioRisk({ balance, positions, expectedWallet, risk, s
 
   if (state.tripped) {
     return { allowed: false, tripped: true, snapshot, lpLossUsd, state, reason: "portfolio loss circuit breaker is latched" };
-  }
-  if (snapshot.equity_usd > capitalBudgetUsd + 0.01) {
-    return { allowed: false, snapshot, lpLossUsd, reason: "portfolio equity exceeds the approved $100 capital budget" };
   }
   if (snapshot.open_exposure_usd > maxConcurrentExposureUsd + 0.01) {
     return { allowed: false, snapshot, lpLossUsd, reason: "current LP exposure exceeds the approved concurrent exposure limit" };
