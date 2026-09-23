@@ -9,6 +9,7 @@ Reassess the Sunstrike fork after five months, establish true wallet-level econo
 - `lessons.json`: 28 closed position records dated 19–22 April 2026. Four have zero initial value. The other 24 contain 15 positive, 6 negative, and 3 flat recorded outcomes; their summed position PnL is **−$5.33**. This is not reconciled wallet PnL.
 - The largest recorded loss is **−$4.89**. Gross LP fees in the 24 nonzero records sum to about **$8.24**, already included in the recorded position PnL formula.
 - `logs/actions-*.jsonl` contains deploy and close results with transaction-signature-shaped strings. Chain confirmation, exact token flows, rent, swaps, and network fees have not been independently reconciled in this audit.
+- Of the 28 performance positions, 27 match a full successful deploy record and 23 match a full successful close record in the local action logs. Other action results may be truncated; missing full log entries are not proof that a chain transaction did not happen.
 - Historical local `.env` and `user-config.json` were set to `DRY_RUN=false`. Both local values were changed to `true` before running the agent. Secret values were not printed or copied.
 - Existing local settings include `maxPositions=1`, `maxDeployAmount=0.3 SOL`, `deployAmountSol=0.2 SOL`, `positionSizePct=0.55`, and `stopLossPct=-80`. These are historical settings, not an approved restart risk policy.
 - The repository has no durable wallet-level daily or cumulative loss limit. A stop-loss trigger also cannot guarantee a fill at its threshold during a token collapse or an outage.

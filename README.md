@@ -124,8 +124,9 @@ RPC_URL=https://mainnet.helius-rpc.com/?api-key=YOUR_KEY
 OPENROUTER_API_KEY=sk-or-...
 HELIUS_API_KEY=your_helius_key          # for wallet balance lookups
 TELEGRAM_BOT_TOKEN=123456:ABC...        # optional — for notifications + chat
-TELEGRAM_CHAT_ID=                       # auto-filled on first message
-DRY_RUN=true                            # set false for live trading
+TELEGRAM_CHAT_ID=                       # set the exact approved chat ID
+TELEGRAM_ALLOWED_USER_IDS=              # approved controller user IDs
+DRY_RUN=true
 ```
 
 > Never put your private key or API keys in `user-config.json` — use `.env` only. Both files are gitignored.
@@ -142,10 +143,10 @@ See [Config reference](#config-reference) below.
 
 ```bash
 npm run dev    # dry run — no on-chain transactions
-npm start      # live mode
+npm start      # uses configured mode; defaults to dry run
 ```
 
-On startup Meridian fetches your wallet balance, open positions, and top pool candidates, then begins autonomous cycles immediately.
+On startup Sunstrike fetches your wallet balance, open positions, and top pool candidates, then begins autonomous cycles immediately. Live execution is blocked unless both local live settings are explicitly set after the restart gates are satisfied.
 
 ---
 
