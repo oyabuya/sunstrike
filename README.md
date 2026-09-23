@@ -137,6 +137,8 @@ For the September 2026 restart, use a new dedicated wallet. Put its private key 
 
 The owner set a **$100 starting capital** and **$20 maximum total test loss**. These are policy limits, not yet an enforced wallet-level circuit breaker. Keep both live flags off until portfolio valuation, cumulative loss checks, and stop alerts are implemented and tested. The historical per-position stop loss does not enforce the $20 cap.
 
+For a low-cost model trial, set `managementModel`, `screeningModel`, and `generalModel` to `openai/gpt-6-luna` in `user-config.json`. It is newly released and must pass an authenticated dry-run tool-call and report-format check before use for decisions. The code's fallback model is `openai/gpt-4.1-mini`; unlike the primary model, the fallback is only attempted for certain transient provider errors. Monitor actual OpenRouter usage and report accuracy rather than assuming the model price alone makes the strategy profitable.
+
 Copy config and edit as needed:
 
 ```bash

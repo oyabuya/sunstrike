@@ -174,7 +174,7 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
       const activeModel = model || DEFAULT_MODEL;
 
       // Retry up to 3 times on transient provider errors (502, 503, 529)
-      const FALLBACK_MODEL = "stepfun/step-3.5-flash:free";
+      const FALLBACK_MODEL = "openai/gpt-4.1-mini";
       let response;
       let usedModel = activeModel;
       // Dashscope/Qwen does not support tool_choice="required" — always use "auto"
@@ -190,7 +190,8 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
             messages,
             tools: getToolsForRole(agentType, goal),
             tool_choice: toolChoice,
-            temperature: config.llm.temperature,
+            // GPT-6 Luna's OpenRouter catalog does not list temperature support.
+            ...(!/^openai\/gpt-6-luna(?:$|:)/.test(usedModel) ? { temperature: config.llm.temperature } : {}),
             max_tokens: maxOutputTokens ?? config.llm.maxTokens,
           });
         } catch (error) {
