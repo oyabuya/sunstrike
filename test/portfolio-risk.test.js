@@ -19,7 +19,6 @@ const risk = {
   maxPositionUsd: 20,
   maxConcurrentExposureUsd: 20,
   minimumLiquidReserveUsd: 15,
-  otherApiCostsUsdPerMonth: 0,
 };
 const fresh = (totalUsd, positions = []) => {
   const observed_at = new Date().toISOString();
@@ -45,13 +44,13 @@ test("the $20 loss breaker latches across checks and restart via durable state",
 
   const oldMode = process.env.DRY_RUN;
   process.env.DRY_RUN = "false";
-  recordExternalModelCost(2, "test-model", { expectedWallet: "DEDICATED", baselineUsd: 100, otherApiCostsUsdPerMonth: 0, statePath });
+  recordExternalModelCost(2, "test-model", { expectedWallet: "DEDICATED", baselineUsd: 100, statePath });
   process.env.DRY_RUN = oldMode ?? "true";
 
-  const loss = fresh(81);
+  const loss = fresh(79);
   const first = checkPortfolioRisk({ ...loss, expectedWallet: "DEDICATED", risk, statePath });
   assert.equal(first.tripped, true);
-  assert.equal(first.netLossUsd, 21);
+  assert.equal(first.lpLossUsd, 21);
   const recovered = fresh(99);
   const afterRestart = checkPortfolioRisk({ ...recovered, expectedWallet: "DEDICATED", risk, statePath });
   assert.equal(afterRestart.tripped, true);
@@ -64,21 +63,19 @@ test("the $20 loss breaker latches across checks and restart via durable state",
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test("trading gains offset metered model costs in net portfolio loss", () => {
+test("metered model costs stay outside the LP capital and loss cap", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sunstrike-risk-net-"));
   const statePath = path.join(dir, "portfolio-risk.json");
-  const profitable = fresh(110);
   const starting = fresh(100);
   initializePortfolioRiskState({ ...starting, expectedWallet: "DEDICATED", risk, statePath });
   const oldMode = process.env.DRY_RUN;
   process.env.DRY_RUN = "false";
-  recordExternalModelCost(15, "test-model", { expectedWallet: "DEDICATED", baselineUsd: 100, otherApiCostsUsdPerMonth: 0, statePath });
+  recordExternalModelCost(15, "test-model", { expectedWallet: "DEDICATED", baselineUsd: 100, statePath });
   if (oldMode == null) delete process.env.DRY_RUN;
   else process.env.DRY_RUN = oldMode;
-  const result = checkPortfolioRisk({ ...profitable, expectedWallet: "DEDICATED", risk, statePath });
-  assert.equal(result.netLossUsd, 5);
-  assert.equal(result.allowed, false); // realized equity above the approved $100 budget pauses new entries.
-  assert.match(result.reason, /exceeds the approved \$100 capital budget/);
+  const result = checkPortfolioRisk({ ...starting, expectedWallet: "DEDICATED", risk, statePath });
+  assert.equal(result.lpLossUsd, 0);
+  assert.equal(result.allowed, true);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -93,39 +90,44 @@ test("missing risk state blocks instead of resetting loss history", () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test("unknown model cost accounting latches the breaker for forced risk reduction", () => {
+test("unknown model cost accounting does not latch the LP loss breaker", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sunstrike-risk-costs-"));
   const statePath = path.join(dir, "portfolio-risk.json");
   const sample = fresh(100);
   initializePortfolioRiskState({ ...sample, expectedWallet: "DEDICATED", risk, statePath });
   const oldMode = process.env.DRY_RUN;
   process.env.DRY_RUN = "false";
-  markExternalCostAccountingIncomplete("test-model", { expectedWallet: "DEDICATED", baselineUsd: 100, otherApiCostsUsdPerMonth: 0, statePath });
+  markExternalCostAccountingIncomplete("test-model", { expectedWallet: "DEDICATED", baselineUsd: 100, statePath });
   if (oldMode == null) delete process.env.DRY_RUN;
   else process.env.DRY_RUN = oldMode;
 
   const result = checkPortfolioRisk({ ...sample, expectedWallet: "DEDICATED", risk, statePath });
-  assert.equal(result.allowed, false);
-  assert.equal(result.tripped, true);
-  assert.equal(result.netLossUsd, null);
-  assert.match(result.reason, /could not be reconciled/);
+  assert.equal(result.allowed, true);
+  assert.equal(result.state.tripped, false);
+  assert.equal(result.lpLossUsd, 0);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test("monthly non-LLM provider costs accrue into net portfolio loss", () => {
+test("provider costs over a month do not reduce LP capital or trip the LP breaker", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sunstrike-risk-provider-costs-"));
   const statePath = path.join(dir, "portfolio-risk.json");
-  const monthlyRisk = { ...risk, otherApiCostsUsdPerMonth: 25 };
   const startAt = Date.now() - 30 * 24 * 60 * 60 * 1000;
   const initial = fresh(100);
   initial.balance.observed_at = new Date(startAt).toISOString();
   initial.positions.observed_at = new Date(startAt).toISOString();
-  initializePortfolioRiskState({ ...initial, expectedWallet: "DEDICATED", risk: monthlyRisk, statePath, now: startAt });
+  initializePortfolioRiskState({ ...initial, expectedWallet: "DEDICATED", risk, statePath, now: startAt });
+  const legacyState = JSON.parse(fs.readFileSync(statePath, "utf8"));
+  legacyState.other_api_costs_usd_per_month = 25;
+  legacyState.external_costs_usd = 25;
+  legacyState.external_cost_accounting_complete = false;
+  legacyState.last_other_api_cost_accrual_at = new Date(startAt).toISOString();
+  fs.writeFileSync(statePath, JSON.stringify(legacyState));
 
   const current = fresh(100);
-  const result = checkPortfolioRisk({ ...current, expectedWallet: "DEDICATED", risk: monthlyRisk, statePath });
-  assert.equal(result.tripped, true);
-  assert.ok(result.netLossUsd > 20);
+  const result = checkPortfolioRisk({ ...current, expectedWallet: "DEDICATED", risk, statePath });
+  assert.equal(result.state.tripped, false);
+  assert.equal(result.lpLossUsd, 0);
+  assert.equal(result.allowed, true);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 

@@ -12,7 +12,7 @@ import { getMyPositions, closePosition, getActiveBin } from "./tools/dlmm.js";
 import { getWalletBalances } from "./tools/wallet.js";
 import { getTopCandidates, getVolumeTrend } from "./tools/screening.js";
 import { config, reloadScreeningThresholds, computeDeployAmount } from "./config.js";
-import { evolveThresholds, getPerformanceSummary } from "./lessons.js";
+import { evolveThresholds, getCampaignPerformance, getPerformanceSummary } from "./lessons.js";
 import { registerCronRestarter, executeTool } from "./tools/executor.js";
 import { startPolling, stopPolling, sendMessage, sendHTML, notifyOutOfRange, isEnabled as telegramEnabled, createLiveMessage } from "./telegram.js";
 import { generateBriefing } from "./briefing.js";
@@ -517,7 +517,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
         risk: config.risk,
       });
       if (!riskStatus.allowed) {
-        log("portfolio_risk", `Screening blocked: ${riskStatus.reason}${riskStatus.netLossUsd != null ? `; net loss $${riskStatus.netLossUsd.toFixed(2)}` : ""}`);
+        log("portfolio_risk", `Screening blocked: ${riskStatus.reason}${riskStatus.lpLossUsd != null ? `; LP loss $${riskStatus.lpLossUsd.toFixed(2)}` : ""}`);
         screenReport = `Screening blocked by portfolio risk policy: ${riskStatus.reason}.`;
         _screeningBusy = false;
         return screenReport;
@@ -889,9 +889,9 @@ Summarize the current portfolio health, total fees earned, and performance of al
         if (riskStatus.tripped) {
           if (Date.now() - _lastBreakerNoticeAt >= 5 * 60_000) {
             _lastBreakerNoticeAt = Date.now();
-            const lossLabel = Number.isFinite(riskStatus.netLossUsd) ? `$${riskStatus.netLossUsd.toFixed(2)}` : "unknown (risk accounting incomplete)";
-            log("portfolio_risk", `Circuit breaker latched at net loss ${lossLabel}; closing ${result?.positions?.length ?? 0} open position(s).`);
-            if (telegramEnabled()) sendMessage(`⛔ Portfolio risk breaker latched; net loss is ${lossLabel}. New entries are locked; open positions are being closed.`).catch(() => {});
+            const lossLabel = Number.isFinite(riskStatus.lpLossUsd) ? `$${riskStatus.lpLossUsd.toFixed(2)}` : "unknown";
+            log("portfolio_risk", `LP loss breaker latched at ${lossLabel} of the $${config.risk.maxCumulativeLossUsd} cap; closing ${result?.positions?.length ?? 0} open position(s).`);
+            if (telegramEnabled()) sendMessage(`⛔ LP loss breaker latched at ${lossLabel} of the $${config.risk.maxCumulativeLossUsd} cap. New entries are locked; open positions are being closed.`).catch(() => {});
           }
           const lastAttempt = Date.parse(riskStatus.state?.last_liquidation_attempt_at || "");
           if (result?.positions?.length && (!Number.isFinite(lastAttempt) || Date.now() - lastAttempt >= 120_000)) {
@@ -1398,9 +1398,7 @@ Focus on: hold duration, entry/exit timing, what win rates look like, whether sc
           console.log(`\nNeed at least 5 closed positions to evolve. ${needed} more needed.\n`);
           return;
         }
-        const fs = await import("fs");
-        const lessonsData = JSON.parse(fs.default.readFileSync("./lessons.json", "utf8"));
-        const result = evolveThresholds(lessonsData.performance, config);
+        const result = evolveThresholds(getCampaignPerformance(), config);
         if (!result || Object.keys(result.changes).length === 0) {
           console.log("\nNo threshold changes needed — current settings already match performance data.\n");
         } else {

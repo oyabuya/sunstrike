@@ -557,13 +557,8 @@ switch (subcommand) {
   // ── evolve ───────────────────────────────────────────────────────
   case "evolve": {
     const { config } = await import("./config.js");
-    const { evolveThresholds } = await import("./lessons.js");
-    const fs2 = await import("fs");
-    const lessonsFile = "./lessons.json";
-    let perfData = [];
-    if (fs2.existsSync(lessonsFile)) {
-      try { perfData = JSON.parse(fs2.readFileSync(lessonsFile, "utf8")).performance || []; } catch { /* no data */ }
-    }
+    const { evolveThresholds, getCampaignPerformance } = await import("./lessons.js");
+    const perfData = getCampaignPerformance();
     const result = evolveThresholds(perfData, config);
     if (!result) {
       out({ evolved: false, reason: `Need at least 5 closed positions (have ${perfData.length})` });

@@ -43,10 +43,10 @@ test("live startup requires an initialized state bound to the dedicated wallet",
     GMGN_API_KEY: "configured",
     OPENROUTER_API_KEY: "configured",
     LLM_BASE_URL: "https://openrouter.ai/api/v1",
-    SUNSTRIKE_OTHER_API_COSTS_USD_PER_MONTH: "0",
   };
   const missing = run('await import("./config.js")', liveEnv);
   assert.notEqual(missing.status, 0);
+  assert.match(missing.stderr, /Live startup blocked by readiness gates:/);
   assert.match(missing.stderr, /initialized portfolio risk state/);
   fs.rmSync(dir, { recursive: true, force: true });
 });

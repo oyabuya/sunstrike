@@ -45,6 +45,29 @@ function save(data) {
   fs.writeFileSync(LESSONS_FILE, JSON.stringify(data, null, 2));
 }
 
+/** New wallet campaigns keep their learning/statistics separate from archived wallets. */
+export function filterPerformanceForCampaign(performance = [], walletScope = process.env.SUNSTRIKE_LIVE_WALLET) {
+  if (!Array.isArray(performance)) return [];
+  if (walletScope === null) return [...performance];
+  const wallet = typeof walletScope === "string" ? walletScope.trim() : "";
+  return wallet ? performance.filter((row) => row.wallet_scope === wallet) : [];
+}
+
+export function getCampaignPerformance(walletScope = process.env.SUNSTRIKE_LIVE_WALLET) {
+  return filterPerformanceForCampaign(load().performance, walletScope);
+}
+
+export function filterLessonsForCampaign(lessons = [], walletScope = process.env.SUNSTRIKE_LIVE_WALLET) {
+  if (walletScope === null) return [...lessons];
+  const wallet = typeof walletScope === "string" ? walletScope.trim() : "";
+  if (!wallet) return lessons.filter((lesson) => lesson.outcome === "manual" && !lesson.tags?.includes("evolution"));
+  return lessons.filter((lesson) => {
+    if (lesson.wallet_scope) return lesson.wallet_scope === wallet;
+    // Keep explicitly authored general guidance; archive-derived and auto-evolved lessons stay with April.
+    return lesson.outcome === "manual" && !lesson.tags?.includes("evolution");
+  });
+}
+
 // ─── Record Position Performance ──────────────────────────────
 
 /**
@@ -111,6 +134,7 @@ export async function recordPerformance(perf) {
 
   const entry = {
     ...perf,
+    wallet_scope: perf.wallet_scope || process.env.SUNSTRIKE_LIVE_WALLET || null,
     pnl_usd: Math.round(pnl_usd * 100) / 100,
     pnl_pct: Math.round(pnl_pct * 100) / 100,
     range_efficiency: Math.round(range_efficiency * 10) / 10,
@@ -147,9 +171,10 @@ export async function recordPerformance(perf) {
   }
 
   // Evolve thresholds every 5 closed positions
-  if (data.performance.length % MIN_EVOLVE_POSITIONS === 0) {
+  const campaignPerformance = filterPerformanceForCampaign(data.performance);
+  if (campaignPerformance.length > 0 && campaignPerformance.length % MIN_EVOLVE_POSITIONS === 0) {
     const { config, reloadScreeningThresholds } = await import("./config.js");
-    const result = evolveThresholds(data.performance, config);
+    const result = evolveThresholds(campaignPerformance, config);
     if (result?.changes && Object.keys(result.changes).length > 0) {
       reloadScreeningThresholds();
       log("evolve", `Auto-evolved thresholds: ${JSON.stringify(result.changes)}`);
@@ -158,7 +183,7 @@ export async function recordPerformance(perf) {
     // Darwinian signal weight recalculation
     if (config.darwin?.enabled) {
       const { recalculateWeights } = await import("./signal-weights.js");
-      const wResult = recalculateWeights(data.performance, config);
+      const wResult = recalculateWeights(campaignPerformance, config);
       if (wResult.changes.length > 0) {
         log("evolve", `Darwin: adjusted ${wResult.changes.length} signal weight(s)`);
       }
@@ -227,6 +252,7 @@ function derivLesson(perf) {
     pnl_pct: perf.pnl_pct,
     range_efficiency: perf.range_efficiency,
     pool: perf.pool,
+    wallet_scope: perf.wallet_scope || null,
     created_at: new Date().toISOString(),
   };
 }
@@ -381,6 +407,7 @@ export function evolveThresholds(perfData, config) {
     rule: `[AUTO-EVOLVED @ ${perfData.length} positions] ${Object.entries(changes).map(([k, v]) => `${k}=${v}`).join(", ")} — ${Object.values(rationale).join("; ")}`,
     tags: ["evolution", "config_change"],
     outcome: "manual",
+    wallet_scope: perfData.find((row) => row.wallet_scope)?.wallet_scope || null,
     created_at: new Date().toISOString(),
   });
   save(data);
@@ -474,9 +501,9 @@ export function unpinLesson(id) {
 /**
  * List lessons with optional filters — for agent browsing via Telegram.
  */
-export function listLessons({ role = null, pinned = null, tag = null, limit = 30 } = {}) {
+export function listLessons({ role = null, pinned = null, tag = null, limit = 30, walletScope = process.env.SUNSTRIKE_LIVE_WALLET } = {}) {
   const data = load();
-  let lessons = [...data.lessons];
+  let lessons = filterLessonsForCampaign(data.lessons, walletScope);
 
   if (pinned !== null) lessons = lessons.filter((l) => !!l.pinned === pinned);
   if (role)            lessons = lessons.filter((l) => !l.role || l.role === role);
@@ -565,10 +592,11 @@ export function getLessonsForPrompt(opts = {}) {
   // Support legacy call signature: getLessonsForPrompt(20)
   if (typeof opts === "number") opts = { maxLessons: opts };
 
-  const { agentType = "GENERAL", maxLessons } = opts;
+  const { agentType = "GENERAL", maxLessons, walletScope = process.env.SUNSTRIKE_LIVE_WALLET } = opts;
 
   const data = load();
-  if (data.lessons.length === 0) return null;
+  const campaignLessons = filterLessonsForCampaign(data.lessons, walletScope);
+  if (campaignLessons.length === 0) return null;
 
   // Smaller caps for automated cycles — they don't need the full lesson history
   const isAutoCycle = agentType === "SCREENER" || agentType === "MANAGER";
@@ -581,7 +609,7 @@ export function getLessonsForPrompt(opts = {}) {
 
   // ── Tier 1: Pinned ──────────────────────────────────────────────
   // Respect role even for pinned lessons — a pinned SCREENER lesson shouldn't pollute MANAGER
-  const pinned = data.lessons
+  const pinned = campaignLessons
     .filter((l) => l.pinned && (!l.role || l.role === agentType || agentType === "GENERAL"))
     .sort(byPriority)
     .slice(0, PINNED_CAP);
@@ -590,7 +618,7 @@ export function getLessonsForPrompt(opts = {}) {
 
   // ── Tier 2: Role-matched ────────────────────────────────────────
   const roleTags = ROLE_TAGS[agentType] || [];
-  const roleMatched = data.lessons
+  const roleMatched = campaignLessons
     .filter((l) => {
       if (usedIds.has(l.id)) return false;
       // Include if: lesson has no role restriction OR matches this role
@@ -607,7 +635,7 @@ export function getLessonsForPrompt(opts = {}) {
   // ── Tier 3: Recent fill ─────────────────────────────────────────
   const remainingBudget = RECENT_CAP - pinned.length - roleMatched.length;
   const recent = remainingBudget > 0
-    ? data.lessons
+    ? campaignLessons
         .filter((l) => !usedIds.has(l.id))
         .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))
         .slice(0, remainingBudget)
@@ -640,9 +668,9 @@ function fmt(lessons) {
  * @param {number} [opts.hours=24]   - How many hours back to look
  * @param {number} [opts.limit=50]   - Max records to return
  */
-export function getPerformanceHistory({ hours = 24, limit = 50 } = {}) {
+export function getPerformanceHistory({ hours = 24, limit = 50, walletScope = process.env.SUNSTRIKE_LIVE_WALLET } = {}) {
   const data = load();
-  const p = data.performance;
+  const p = filterPerformanceForCampaign(data.performance, walletScope);
 
   if (p.length === 0) return { positions: [], count: 0, hours };
 
@@ -679,9 +707,10 @@ export function getPerformanceHistory({ hours = 24, limit = 50 } = {}) {
 /**
  * Get performance stats summary.
  */
-export function getPerformanceSummary() {
+export function getPerformanceSummary({ walletScope = process.env.SUNSTRIKE_LIVE_WALLET } = {}) {
   const data = load();
-  const p = data.performance;
+  const p = filterPerformanceForCampaign(data.performance, walletScope);
+  const lessons = filterLessonsForCampaign(data.lessons, walletScope);
 
   if (p.length === 0) return null;
 
@@ -696,6 +725,6 @@ export function getPerformanceSummary() {
     avg_pnl_pct: Math.round(avgPnlPct * 100) / 100,
     avg_range_efficiency_pct: Math.round(avgRangeEfficiency * 10) / 10,
     win_rate_pct: Math.round((wins / p.length) * 100),
-    total_lessons: data.lessons.length,
+    total_lessons: lessons.length,
   };
 }

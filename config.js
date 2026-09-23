@@ -38,9 +38,6 @@ export const config = {
     maxPositionUsd: 20,
     maxConcurrentExposureUsd: 20,
     minimumLiquidReserveUsd: 15,
-    otherApiCostsUsdPerMonth: process.env.SUNSTRIKE_OTHER_API_COSTS_USD_PER_MONTH?.trim()
-      ? Number(process.env.SUNSTRIKE_OTHER_API_COSTS_USD_PER_MONTH)
-      : Number.NaN,
   },
 
   // ─── Pool Screening Thresholds ───────────
@@ -180,20 +177,15 @@ if (process.env.DRY_RUN === "false") {
   if (!process.env.JUPITER_API_KEY) missing.push("JUPITER_API_KEY");
   if (!process.env.GMGN_API_KEY) missing.push("GMGN_API_KEY");
   if (!(process.env.OPENROUTER_API_KEY || process.env.LLM_API_KEY)) missing.push("OPENROUTER_API_KEY");
-  if (process.env.LLM_BASE_URL && !/openrouter\.ai\/api\/v1/i.test(process.env.LLM_BASE_URL)) missing.push("OpenRouter usage metering");
-  if (!Number.isFinite(config.risk.otherApiCostsUsdPerMonth) || config.risk.otherApiCostsUsdPerMonth < 0) {
-    missing.push("SUNSTRIKE_OTHER_API_COSTS_USD_PER_MONTH");
-  }
   if (config.risk.maxPositions !== 1) missing.push("maxPositions=1");
   if (config.strategy.strategy !== "spot") missing.push("strategy=spot");
+  if (config.management.autoCompoundEnabled !== false) missing.push("autoCompoundEnabled=false");
   if (config.screening.antiRugStrict !== true) missing.push("antiRugStrict=true");
   const riskStatePath = path.resolve(process.env.SUNSTRIKE_PORTFOLIO_STATE_PATH || "./portfolio-risk.json");
   try {
     const riskState = JSON.parse(fs.readFileSync(riskStatePath, "utf8"));
     if (riskState?.version !== 1 || riskState.wallet !== process.env.SUNSTRIKE_LIVE_WALLET ||
         riskState.baseline_usd !== config.risk.capitalBudgetUsd || typeof riskState.tripped !== "boolean" ||
-        typeof riskState.external_cost_accounting_complete !== "boolean" ||
-        !Number.isFinite(riskState.external_costs_usd) || riskState.external_costs_usd < 0 ||
         !Number.isFinite(Date.parse(riskState.created_at || "")) ||
         riskState.initial_snapshot?.wallet !== process.env.SUNSTRIKE_LIVE_WALLET ||
         !Number.isFinite(riskState.initial_snapshot?.equity_usd) || riskState.initial_snapshot?.positions !== 0) {

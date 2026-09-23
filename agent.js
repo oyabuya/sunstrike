@@ -234,13 +234,12 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
           try {
             const cost = Number(response.usage?.cost);
             if (openRouterMetered && Number.isFinite(cost) && cost >= 0) {
-              recordExternalModelCost(cost, usedModel, { otherApiCostsUsdPerMonth: config.risk.otherApiCostsUsdPerMonth });
+              recordExternalModelCost(cost, usedModel);
             } else {
-              markExternalCostAccountingIncomplete(usedModel, { otherApiCostsUsdPerMonth: config.risk.otherApiCostsUsdPerMonth });
+              markExternalCostAccountingIncomplete(usedModel);
             }
-          } catch {
-            process.env.SUNSTRIKE_EXTERNAL_COST_ACCOUNTING_BROKEN = "true";
-            throw new Error("OpenRouter cost accounting could not be persisted; live actions are blocked");
+          } catch (error) {
+            log("warn", `OpenRouter operating cost was not recorded: ${error.message}`);
           }
         }
         log("error", `Bad API response: ${JSON.stringify(response).slice(0, 200)}`);
@@ -250,13 +249,12 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
         try {
           const cost = Number(response.usage?.cost);
           if (openRouterMetered && Number.isFinite(cost) && cost >= 0) {
-            recordExternalModelCost(cost, usedModel, { otherApiCostsUsdPerMonth: config.risk.otherApiCostsUsdPerMonth });
+            recordExternalModelCost(cost, usedModel);
           } else {
-            markExternalCostAccountingIncomplete(usedModel, { otherApiCostsUsdPerMonth: config.risk.otherApiCostsUsdPerMonth });
+            markExternalCostAccountingIncomplete(usedModel);
           }
-        } catch {
-          process.env.SUNSTRIKE_EXTERNAL_COST_ACCOUNTING_BROKEN = "true";
-          throw new Error("OpenRouter cost accounting could not be persisted; live actions are blocked");
+        } catch (error) {
+          log("warn", `OpenRouter operating cost was not recorded: ${error.message}`);
         }
       }
       if (usedModel !== activeModel) {

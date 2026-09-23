@@ -4,10 +4,11 @@ Terakhir diperbarui: **2026-09-24 WIB**. Baca `AGENTS.md`, dokumen ini, `RESTART
 
 ## Keputusan terakhir pemilik
 
-- Pemilik meminta Sunstrike berjalan live sesegera mungkin. Batas risiko yang dipilih tetap **modal $100, rugi bersih maksimum $20**; request ini tidak menghapus hard gate.
+- Pemilik meminta Sunstrike berjalan live sesegera mungkin. Batas risiko yang dipilih tetap **modal LP $100, rugi LP maksimum $20**; request ini tidak menghapus hard gate.
 - Tiga dry run 23 September mendahului patch parity terbaru. Hasilnya bukan bukti siap live atau profit.
-- Sasaran tetap PnL bersih setelah nilai inventory, swap, gas, rent, dan biaya API/LLM. Strategi belum terbukti profit konsisten.
-- Target: side income yang dibuktikan dengan PnL bersih setelah perubahan nilai inventory, swap, gas, rent, dan API/LLM. Belum ada bukti strategi optimal atau profit konsisten.
+- Biaya API/LLM adalah biaya operasional di luar modal LP $100 dan **tidak mengurangi breaker rugi LP $20**. PnL akhir tetap dapat melaporkan biaya operasional secara terpisah.
+- Histori April tetap utuh sebagai arsip. Rekonsiliasi April bukan syarat campaign wallet baru; statistik dan auto-learning posisi kini disaring per wallet.
+- Sasaran tetap PnL bersih setelah perubahan inventory, swap, gas, rent, dan biaya operasional. Strategi belum terbukti profit konsisten.
 
 ## Status operasional terakhir yang diverifikasi
 
@@ -20,9 +21,12 @@ Terakhir diperbarui: **2026-09-24 WIB**. Baca `AGENTS.md`, dokumen ini, `RESTART
 - Runner pengganti `scripts/three-dry-run-checks.js` **sudah selesai 3/3 dan keluar**. Tidak ada transaksi dikirim; runner ini memakai `silent: true` dan tidak mengirim laporan Telegram.
 - Telegram `@Sunstrike_Bot` sudah dikonfigurasi dan pengujian getMe/getUpdates/sendMessage sebelumnya berhasil. Tidak ada polling perintah Telegram/service baru yang dijalankan.
 - Luna `openai/gpt-6-luna` dipakai untuk screening/management/general; fallback provider tertentu `openai/gpt-4.1-mini`. Jev hanya shadow scoring dry-run, bukan pengendali hard gate atau transaksi.
-- Lokal sesi ini: `DRY_RUN=true`, live belum diaktifkan, `SUNSTRIKE_LIVE_WALLET`, `JUPITER_API_KEY`, dan `SUNSTRIKE_OTHER_API_COSTS_USD_PER_MONTH` belum disetel, serta state breaker belum ada. Kunci lama tidak dipakai untuk pengujian.
-- `user-config.json` lokal yang diabaikan Git masih memilih `bid_ask` dan `autoCompoundEnabled=true`; source default kini `spot` dan compounding mati. Jangan salin config/key historis ke VPS.
-- OpenRouter dimeter per respons; biaya provider non-LLM diakru bulanan dari `SUNSTRIKE_OTHER_API_COSTS_USD_PER_MONTH`. Nilai ini wajib diisi berdasarkan tagihan/estimasi konservatif dan terikat ke state; perubahan tarif tanpa review memblokir live. Biaya variabel tetap perlu rekonsiliasi invoice.
+- Canary config lokal disetel `spot`, `maxPositions=1`, `autoCompoundEnabled=false`; sizing yang diuji membatasi posisi dan eksposur serentak pada $20 serta menyisakan reserve cair $15.
+- Pemilik mengonfirmasi wallet dedicated sudah dimasukkan ke `.env` dan API Jupiter sedang disiapkan. `.env` tidak dibuka. Runtime initializer belum melihat `SUNSTRIKE_LIVE_WALLET` dengan nama persis itu; ledger belum bisa diikat ke alamat wallet.
+- Pemilik melaporkan saldo wallet $100. Snapshot dari wallet yang dipilih runtime menunjukkan 0 posisi dan **0 SOL / $0**, sehingga itu bukan bukti saldo wallet dedicated yang dilaporkan; hentikan pemakaian alamat runtime tersebut sampai pemetaan wallet cocok.
+- Smoke test menolak entry sebelum screening kandidat karena ukuran terhitung di bawah minimum 0,01 SOL. Tidak ada transaksi.
+- `WALLET_PRIVATE_KEY` tersedia setelah `dotenv` memuat konfigurasi, tetapi `SUNSTRIKE_LIVE_WALLET` tidak ada di environment runtime. Ledger risiko belum dibuat. API Jupiter tidak diperiksa langsung.
+- Tidak ada service yang diaktifkan dan tidak ada perubahan yang dikirim ke VPS.
 
 ## Bukti tiga dry run tambahan
 
@@ -50,11 +54,12 @@ Run: **2026-09-23 17:37:30–17:40:50 UTC**, yaitu **24 September 00:37:30–00:
 | `71fe203` | Validasi respons posisi/saldo sebelum screening; tambah runner tiga dry run |
 | `fbbb711` | Samakan gate ketersediaan data deploy dry-run/live dan catat hasil uji |
 | `8469f0e` | Fail-closed lintas provider, sizing USD $20, ledger loss $20 tahan restart, gate startup state/wallet, biaya model/API, dan poller reduksi risiko |
+| working tree | Campaign learning disaring per wallet; biaya provider dipisah dari breaker LP; canary satu posisi Spot tanpa compounding |
 
 - Spot kini baseline source; bukan strategi optimal yang sudah terbukti. Executor menolak strategi selain spot saat live.
 - Gate screening/executor sekarang menggunakan satu kebijakan risiko fail-closed: mint harus cocok; audit mint/freeze, top-10, bot, creator/dev, bundler, rat-trader, honeypot, rugpull, wash, dan level risiko harus diketahui serta lolos ambang.
 - Sizing live dibatasi satu posisi maksimal **$20**, eksposur serentak **$20**, reserve likuid **$15**, dan hanya pool quote SOL. Snapshot wallet+LP harus bertimestamp dekat dan merujuk wallet yang sama.
-- `portfolio-risk.json` dibuat satu kali dari snapshot baca-saja saat wallet dedicated tidak memiliki LP terbuka. State terikat wallet/kebijakan dan tarif API, ditulis atomik mode 600; state hilang/rusak atau biaya model tak diketahui melatch breaker. Kehilangan state tidak membuat ledger baru otomatis.
+- `portfolio-risk.json` dibuat satu kali dari snapshot baca-saja saat wallet dedicated tidak memiliki LP terbuka. State terikat wallet/kebijakan, ditulis atomik mode 600; state hilang/rusak memblokir entry. Biaya model/provider tidak masuk modal atau breaker LP.
 - Saat loss cap terukur tercapai, breaker latch dan poller mencoba close posisi serta swap pasca-close. Polling bukan jaminan fill atau batas rugi absolut saat harga bergerak, provider mati, atau loop sibuk.
 - Jarak harga yang disebut `downside_buffer_pct` **bukan batas kerugian**. Lebar bin lama, minimum umur exit empat jam dan stop loss lama belum dioptimasi berdasarkan hasil.
 - Exit low-yield tidak lagi mensyaratkan PnL positif. Manager diperintahkan mengikuti CLOSE mekanis; eksekusi exit masih bergantung pada jalur model/tool.
@@ -71,23 +76,22 @@ Run: **2026-09-23 17:37:30–17:40:50 UTC**, yaitu **24 September 00:37:30–00:
 
 ## Verifikasi terakhir
 
-Pada checkout lokal setelah patch ini: **8/8 suite tes lulus**, syntax check semua file JS yang disentuh dan `git diff --check` lulus. Tes VPS lama tetap 16/16 setelah `fbbb711`, sebelum patch ini.
+Pada checkout lokal: **9/9 suite tes lulus**, syntax check semua file JS yang disentuh dan `git diff --check` lulus. Tes VPS lama tetap 16/16 setelah `fbbb711`, sebelum patch ini.
 
 ```bash
-node --test test/screening-readiness.test.js test/interval-task.test.js test/restart-safety.test.js test/jev-shadow.test.js test/strategy-policy.test.js test/screening-funnel.test.js
+node --test test/*.test.js
 ```
 
-Suite lokal mencakup startup gate, wallet/risk state, restart latch, biaya model, dan fail-closed risk fields. Ini tidak membuktikan profit, transaksi, provider live, atau cakupan risiko penuh.
+Suite lokal mencakup startup gate, wallet/risk state, restart latch, pemisahan biaya API, campaign scope, dan fail-closed risk fields. Satu smoke cycle jaringan mencapai provider tetapi berhenti di gate saldo $0; runner tiga siklus sandbox gagal saat fetch dan dihentikan setelah dua percobaan. Tidak ada transaksi. Ini tidak membuktikan profit atau kesiapan live.
 
-Rekonsiliasi lokal April: **871 action rows**, 29 deploy sukses, 29 close sukses, satu close gagal, satu claim sukses. `lessons.json` berisi 28 hasil PnL bersih **−$5,33**; 4 nilai awal kosong/nol. **23** close dapat dicocokkan ke action log dengan selisih gabungan pembulatan sekitar **−$0,02**; 5 baris belum punya action result terbaca. Ada 104 signature transaksi untuk lookup. RPC read-only gagal sebelum mendapat respons karena DNS `ENOTFOUND` di sandbox; status on-chain belum terverifikasi.
+Arsip April tetap berisi **871 action rows**, 29 deploy sukses, 29 close sukses, satu close gagal, satu claim sukses, dan 28 hasil PnL bersih tercatat **−$5,33**. Angka ini arsip pembanding; tidak mengunci campaign baru. Rekonsiliasi 104 signature opsional untuk audit sejarah dan tidak perlu selesai sebelum LP baru.
 
 ## Pekerjaan berikutnya — prioritas
 
-1. Selesaikan rekonsiliasi 104 signature transaksi via koneksi RPC baca-saja yang bisa diakses; bandingkan dengan 28 record lesson/action tanpa mengubah histori.
-2. Siapkan wallet dedicated baru dan credential operator lengkap termasuk Jupiter. Jangan gunakan wallet/key historis. Atur `spot`, `maxPositions=1`, `autoCompoundEnabled=false`, serta nilai bulanan biaya provider non-LLM yang konservatif dari tagihan.
-3. Dengan wallet baru dan tanpa LP terbuka, jalankan `DRY_RUN=true node scripts/init-portfolio-risk.js` untuk menulis ledger awal tanpa signing. Jika snapshot tidak terbaca, jangan membuat file manual.
-4. Jalankan 2–3 dry run terbaru dengan wallet dedicated: kandidat pass, hard reject, dan provider gagal. Arsipkan artefak, Luna, Jev-shadow, biaya model dan alasan filter.
-5. Rekonsiliasi invoice variabel tiap bulan dan cocokkan seluruh PnL April. Baru setelah itu evaluasi canary; patch lokal belum disinkronkan ke VPS dan layanan tetap tidak diaktifkan.
+1. Pastikan runtime melihat alamat publik melalui `SUNSTRIKE_LIVE_WALLET` dan wallet memiliki equity modal serta SOL operasional; snapshot terakhir menunjukkan saldo $0.
+2. Setelah alamat publik dan saldo tersedia, jalankan `DRY_RUN=true node scripts/init-portfolio-risk.js`. Script hanya membaca wallet/LP dan menolak state bila equity belum memadai atau masih ada LP terbuka.
+3. Pastikan API Jupiter siap sesuai pemilik, lalu ulangi 2–3 dry run setelah wallet memiliki SOL untuk entry dan reserve; arsipkan hasil sebelum menilai canary.
+4. Rekonsiliasi April dan invoice API adalah audit terpisah, bukan prasyarat LP baru. Source belum disinkronkan ke VPS dan service tetap nonaktif.
 
 ## Aturan kerja dan rahasia
 

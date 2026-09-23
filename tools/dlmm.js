@@ -994,6 +994,7 @@ export async function closePosition({ position_address, reason }) {
 
       await recordPerformance({
         position: position_address,
+        wallet_scope: wallet.publicKey.toString(),
         pool: poolAddress,
         pool_name: tracked.pool_name || poolAddress.slice(0, 8),
         strategy: tracked.strategy,
