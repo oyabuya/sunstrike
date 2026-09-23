@@ -1,3 +1,4 @@
+import { assertScreeningInputs } from "./screening-readiness.js";
 import { scheduleInterval } from "./interval-task.js";
 import "dotenv/config";
 import cron from "node-cron";
@@ -500,6 +501,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
   let screenReport = null;
   try {
     [prePositions, preBalance] = await Promise.all([getMyPositions({ force: true }), getWalletBalances()]);
+    assertScreeningInputs(prePositions, preBalance);
     if (prePositions.total_positions >= config.risk.maxPositions) {
       log("cron", `Screening skipped — max positions reached (${prePositions.total_positions}/${config.risk.maxPositions})`);
       screenReport = `Screening skipped — max positions reached (${prePositions.total_positions}/${config.risk.maxPositions}).`;

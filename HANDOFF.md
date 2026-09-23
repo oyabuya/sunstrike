@@ -69,3 +69,9 @@ Terakhir diperbarui: 2026-09-23. Baca `AGENTS.md` dan `RESTART_AUDIT_2026-09-23.
 - Runner 10 siklus memakai timer sama untuk proses baru. Runner yang sedang aktif tidak direstart atau diulang; sinkronisasi file tidak mengubah timer dalam proses lama.
 - Angka default 45m screening, 15m management, 60m health belum terbukti optimal. Window discovery 5m dengan scan 45m melewatkan banyak aktivitas. Profil umur 12–72h, bin step 80–125 dan batas kapitalisasi/TVL membatasi pencarian token muda. Prioritas evaluasi berikutnya: scan dry-run lebih sering (misalnya 5–10m) dengan anggaran API/LLM tercatat, bandingkan metrik window lebih panjang dan profil pasangan mapan; angka ini hipotesis uji, bukan konfigurasi live yang disetujui.
 - Poller PnL 30 detik bukan jaminan exit 30 detik: berhenti sementara saat screening/management sibuk dan memiliki cooldown pemicu management. Batas kerugian $20 belum otomatis. Jadwal yang benar tidak menyelesaikan risiko ini.
+
+## Permintaan percepatan go-live 2026-09-24
+
+- Pemilik meminta screening diuji lalu 2–3 dry run tambahan sebelum menilai live. Disiapkan tiga uji integrasi berjarak 60 detik; ini bukan validasi profit atau izin melewati batas rugi portofolio.
+- `assertScreeningInputs` memblokir error/mismatch posisi dan saldo invalid sebelum screening. Runner `scripts/three-dry-run-checks.js` tidak mengirim pesan, memaksa dry run/live off, menyimpan status terstruktur dan selalu `live_ready=false`.
+- Runner sepuluh siklus lama akan dihentikan secara terarah sebelum pengganti dijalankan. Artefak historis tetap disimpan. Live masih belum layak sampai circuit breaker $20, nilai wallet+LP terverifikasi dan rekonsiliasi memenuhi gate sebelumnya.
