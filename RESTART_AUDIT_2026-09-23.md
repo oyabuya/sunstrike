@@ -22,6 +22,7 @@ Reassess the Sunstrike fork after five months, establish true wallet-level econo
 - The agent's `update_config` tool cannot change capital limits or core anti-rug policy.
 - Dry-run tool results cannot trigger live-style post-action notifications or automatic follow-up swaps.
 - Live deploy rejects missing pool mint data or unavailable required token-risk data.
+- Live deploy also rejects a failed open-position query; the underlying reader can return `total_positions: 0` together with an error, which previously looked like free capacity.
 - The embedded Jupiter API key was removed. A live swap requires `JUPITER_API_KEY` from the local environment. The previously embedded key should be treated as exposed and replaced before use.
 - The screening/agent smoke scripts now exit nonzero on an uncaught API failure; previously they printed an error but reported process success.
 

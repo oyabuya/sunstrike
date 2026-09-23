@@ -479,6 +479,9 @@ async function runSafetyChecks(name, args) {
 
       // Check position count limit + duplicate pool guard — force fresh scan to avoid stale cache
       const positions = await getMyPositions({ force: true });
+      if (process.env.DRY_RUN !== "true" && (positions?.error || !Array.isArray(positions?.positions) || !Number.isInteger(positions?.total_positions))) {
+        return { pass: false, reason: "Deploy blocked: open positions could not be verified." };
+      }
       if (positions.total_positions >= config.risk.maxPositions) {
         return {
           pass: false,
