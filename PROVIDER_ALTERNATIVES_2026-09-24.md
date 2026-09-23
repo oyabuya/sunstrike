@@ -23,6 +23,8 @@ Urutan uji baca-saja: Cabal-Hunter (cek contoh respons, umur data, dan wash scor
 
 Pada 24 September, `CABAL_HUNTER_API_KEY` operator terdeteksi di `.env` VPS. `GET /api/key-balance` mengembalikan HTTP 200, paket free aktif, `scans_per_month=250` dan `scans_remaining_this_period=250`. Angka 5 scan/bulan pada halaman produk adalah batas akses anonim tanpa key. Pemeriksaan saldo tidak memakai scan; belum ada token yang dipindai.
 
+Probe berikutnya memakai mint contoh dari dokumentasi Cabal-Hunter: `/api/scan-cabal` dan `/api/trade-analysis` sama-sama HTTP 200. Respons scan `risk_level=HIGH`, `scan_complete=false`; wash `wash_score=0` tetapi `swaps_analyzed=0`. Kedua panggilan memakai dua jatah (248/250 tersisa). Skor nol dengan sampel nol tidak membuktikan bebas wash; sumber ini belum layak dipetakan ke boolean hard gate. Hentikan probe sampai ada desain cache/anggaran query dan token representatif untuk pembandingan.
+
 ## Implikasi untuk Sunstrike
 
 `token-risk-policy.js` menolak metrik rat-trader, OKX rugpull/wash, dan level risiko bila tidak diketahui. Solana Tracker memberi insider concentration, bukan bukti perilaku rat-trader/insider extraction yang sama; tidak ada field wash trading langsung yang terverifikasi dalam dokumentasi token response. Maka adapter alternatif harus menyimpan sumber dan semantik setiap metrik secara eksplisit, tidak mengisi nilai hilang dengan nol, dan tetap memblokir entry sampai seluruh gate lama memiliki padanan terverifikasi atau pemilik menyetujui revisi kebijakan risiko berdasarkan bukti. Belum ada API key Solana Tracker/Birdeye/OKX di VPS; belum ada transaksi atau perubahan mode.
