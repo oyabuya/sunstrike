@@ -1,0 +1,94 @@
+import { log, logAction } from "../logger.js";
+
+const ENDPOINT = "https://openrouter.ai/api/alpha/decisions";
+const MODEL = "typesafe/jev-1.13";
+
+function finite(value) {
+  const n = Number(value);
+  return value == null || !Number.isFinite(n) ? null : n;
+}
+
+export function buildJevShadowRequest(candidates) {
+  const pools = candidates.slice(0, 5).map(({ pool, ti, volTrend }, i) => ({
+    id: `p${i}`,
+    pool_address: pool.pool,
+    fee_active_tvl_ratio: finite(pool.fee_active_tvl_ratio),
+    volume_window_usd: finite(pool.volume_window),
+    active_tvl_usd: finite(pool.active_tvl),
+    volatility: finite(pool.volatility),
+    organic_score: finite(pool.organic_score),
+    token_age_hours: finite(pool.token_age_hours),
+    price_change_1h_pct: finite(ti?.stats_1h?.price_change),
+    volume_trend_pct: finite(volTrend?.trend_pct),
+    supertrend: pool.st_direction ?? null,
+    top10_holders_pct: finite(ti?.audit?.top_holders_pct),
+    bot_holders_pct: finite(ti?.audit?.bot_holders_pct),
+    bundler_pct: finite(pool.gmgn_bundler_pct ?? pool.bundle_pct),
+    candidate_score: finite(pool.candidate_score),
+  }));
+  const questions = {};
+  for (const p of pools) {
+    questions[`${p.id}_fees`] = {
+      type: "score",
+      instructions: `For ${p.id}, how strong is observed fee activity relative to active TVL? Use only supplied metrics; missing data is uncertain.`,
+      criteria: [
+        "Weak or unavailable fee evidence relative to active TVL",
+        "Some fee activity, but the evidence is mixed or incomplete",
+        "Strong observed fee activity relative to active TVL",
+      ],
+    };
+    questions[`${p.id}_momentum`] = {
+      type: "score",
+      instructions: `For ${p.id}, how favorable is current entry momentum? Use only supplied trend and price metrics; missing data is uncertain.`,
+      criteria: [
+        "Clear adverse price or volume trend",
+        "Mixed, flat, or insufficient momentum evidence",
+        "Price and volume evidence supports current upward momentum",
+      ],
+    };
+    questions[`${p.id}_holder_risk`] = {
+      type: "score",
+      instructions: `For ${p.id}, how concerning is token holder concentration or bot/bundler activity? Missing data is uncertain, not safe.`,
+      criteria: [
+        "Low concern supported by holder, bot, and bundler evidence",
+        "Mixed or incomplete concentration and bot evidence",
+        "High concern from concentration, bot, or bundler evidence",
+      ],
+    };
+  }
+  return { model: MODEL, state: { pools }, questions };
+}
+
+export async function recordJevShadow(candidates, fetcher = fetch) {
+  if (process.env.DRY_RUN !== "true" || process.env.JEV_SHADOW_ENABLED !== "true" || !process.env.OPENROUTER_API_KEY || !candidates.length) return null;
+  const request = buildJevShadowRequest(candidates);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10_000);
+  try {
+    const response = await fetcher(ENDPOINT, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error(`Jev HTTP ${response.status}`);
+    const data = await response.json();
+    const scores = request.state.pools.map(({ id, pool_address, candidate_score }) => {
+      const read = (dimension) => {
+        const answer = data.answers?.[`${id}_${dimension}`];
+        if (answer?.type !== "score" || !Number.isFinite(answer.score) || !Number.isFinite(answer.confidence)) {
+          throw new Error(`Invalid Jev answer for ${id}_${dimension}`);
+        }
+        return { score: answer.score, confidence: answer.confidence };
+      };
+      return { pool_address, candidate_score, fees: read("fees"), momentum: read("momentum"), holder_risk: read("holder_risk") };
+    });
+    logAction({ tool: "jev_shadow", args: { model: MODEL, pools: request.state.pools }, result: { scores, cost_usd: data.usage?.cost ?? null }, success: true });
+    return scores;
+  } catch (error) {
+    log("jev_shadow_warn", `Jev shadow scoring unavailable: ${error.message}`);
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}

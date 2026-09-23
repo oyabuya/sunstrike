@@ -139,6 +139,8 @@ The owner set a **$100 starting capital** and **$20 maximum total test loss**. T
 
 For a low-cost model trial, set `managementModel`, `screeningModel`, and `generalModel` to `openai/gpt-6-luna` in `user-config.json`. It is newly released and must pass an authenticated dry-run tool-call and report-format check before use for decisions. The code's fallback model is `openai/gpt-4.1-mini`; unlike the primary model, the fallback is only attempted for certain transient provider errors. Monitor actual OpenRouter usage and report accuracy rather than assuming the model price alone makes the strategy profitable.
 
+Optional Jev shadow scoring: set `JEV_SHADOW_ENABLED=true` in `.env` while `DRY_RUN=true`. After hard filters, Sunstrike sends up to five candidates' numeric market and holder metrics to `typesafe/jev-1.13` through OpenRouter's Decisions API. It records separate fee, momentum, and holder-risk scores with confidence and API cost in `logs/actions-*.jsonl`. These scores do not alter Luna's input, ranking, or execution. Compare them with later outcomes before using them in decisions; a Jev score is not a probability of profit.
+
 Copy config and edit as needed:
 
 ```bash

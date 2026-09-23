@@ -18,6 +18,7 @@ import { checkSmartWalletsOnPool, getSmartWalletCandidatePools } from "./smart-w
 import { getTokenNarrative, getTokenInfo } from "./tools/token.js";
 import { getPoolDetail } from "./tools/screening.js";
 import { computeEvilPandaDeployPlan, formatEvilPandaDeployPlan, getEvilPandaThresholds } from "./evilpanda-policy.js";
+import { recordJevShadow } from "./tools/jev-shadow.js";
 
 log("startup", "DLMM LP Agent starting...");
 log("startup", `Mode: ${process.env.DRY_RUN === "true" ? "DRY RUN" : "LIVE"}`);
@@ -670,6 +671,12 @@ export async function runScreeningCycle({ silent = false } = {}) {
       Promise.allSettled(passing.map(({ pool }) => getActiveBin({ pool_address: pool.pool }))),
       Promise.allSettled(passing.map(({ pool }) => getVolumeTrend(pool.pool))),
     ]);
+
+    // Independent dry-run measurement only; Jev scores never affect Luna's prompt or trade execution.
+    await recordJevShadow(passing.map((candidate, i) => ({
+      ...candidate,
+      volTrend: volumeTrendResults[i]?.status === "fulfilled" ? volumeTrendResults[i].value : null,
+    })));
 
     // Build compact candidate blocks
     const candidateBlocks = passing.map(({ pool, sw, n, ti, mem, source }, i) => {

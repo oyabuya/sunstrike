@@ -27,6 +27,7 @@ Reassess the Sunstrike fork after five months, establish true wallet-level econo
 - The screening/agent smoke scripts now exit nonzero on an uncaught API failure; previously they printed an error but reported process success.
 - Default OpenRouter model slugs were updated to `openai/gpt-4.1-mini` after the public model catalog no longer listed `openrouter/healer-alpha` or `openrouter/hunter-alpha`. The replacement is listed with tool support; an authenticated tool-call smoke test is still required.
 - For the owner's cheaper model trial, the public OpenRouter catalog on 2026-09-23 listed `openai/gpt-6-luna` at $0.10/M input and $0.50/M output tokens with tool calling and structured outputs, but without a `temperature` parameter. The agent now omits that parameter for Luna and uses the currently listed `openai/gpt-4.1-mini` as its transient-error fallback. Luna was released 2026-09-22, so operational stability and report consistency remain unverified.
+- Optional Jev 1.13 shadow measurement is prepared for dry-run screening only. It records separate fee, momentum, and holder-risk scores for up to five post-filter candidates when `JEV_SHADOW_ENABLED=true` and an OpenRouter key exists. It cannot change candidate order, Luna's prompt, or execution. No authenticated Jev call has been run yet; scores need outcome validation before use.
 
 ## Verification so far
 
