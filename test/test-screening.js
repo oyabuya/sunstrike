@@ -10,7 +10,7 @@ async function main() {
 
   // Test 1: Top pools
   console.log("Fetching top 10 pools (24h)...");
-  const top = await discoverPools({ page_size: 10, timeframe: "24h", category: "top" });
+  const top = await discoverPools({ page_size: 10, overrides: { timeframe: "24h", category: "top" } });
   console.log(`Found ${top.total} total pools, showing ${top.pools.length}`);
 
   if (top.pools.length > 0) {
@@ -28,7 +28,7 @@ async function main() {
 
   // Test 2: Trending pools
   console.log("\n\nFetching trending pools...");
-  const trending = await discoverPools({ page_size: 5, timeframe: "1h", category: "trending" });
+  const trending = await discoverPools({ page_size: 5, overrides: { timeframe: "1h", category: "trending" } });
   console.log(`Found ${trending.pools.length} trending pools`);
 
   // Test 3: Pool detail (if we have a pool address)

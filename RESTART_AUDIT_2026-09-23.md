@@ -31,6 +31,8 @@ Reassess the Sunstrike fork after five months, establish true wallet-level econo
 - Restart safety tests pass for blocked live startup, invalid-mode dry-run fallback, and rejection of agent edits to capital limits.
 - Installed dependencies satisfy the local package manifest (`npm ls --depth=0 --omit=dev`). This does not verify current upstream compatibility.
 - The screening smoke script could not reach `pool-discovery-api.datapi.meteora.ag` from this sandbox (`ENOTFOUND`). Its API behavior remains unverified; the current official Meteora Data API documentation lists `https://dlmm.datapi.meteora.ag` as the production base URL. Do not infer that the older endpoint is dead solely from this sandbox error.
+- On the selected Hetzner VPS, both public Meteora endpoints returned HTTP 200. The old discovery endpoint had over 240,000 pools in an unfiltered query, but the current Sunstrike filter returned **zero** candidates. A bounded filter probe found 8 candidates before strict warning flags, 1 after those flags, and 0 after the 12-hour minimum age rule. This is a current opportunity shortage under the configured rules, not an API outage. Do not loosen safety rules simply to force a trade.
+- The Hetzner host has about 6.6 GiB available RAM and 43 GiB available disk at the audit time. Some existing Next.js and PM2 processes and ports remain present; they were left untouched. A private checkout exists at `/home/ubuntu/projects/sunstrike`, commit `47237ed`, with dependencies installed. No `.env`, `user-config.json`, Sunstrike service, or running bot was created there. The three restart safety tests pass on the VPS.
 
 ## Remaining gates, in order
 
