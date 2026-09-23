@@ -664,8 +664,8 @@ export async function runScreeningCycle({ silent = false } = {}) {
         .map((entry) => `- ${entry.name}: ${entry.reason}`)
         .join("\n");
       screenReport = combinedExamples
-        ? `No candidates available.\nFiltered examples:\n${combinedExamples}`
-        : `No candidates available (all filtered by launchpad / holder-quality rules).`;
+        ? `⛔ NO DEPLOY\n\nNo candidates passed screening.\nFiltered examples:\n${combinedExamples}`
+        : `⛔ NO DEPLOY\n\nNo candidates passed screening (launchpad / holder-quality rules).`;
       return screenReport;
     }
 
@@ -771,7 +771,7 @@ STEPS:
    - bins_above: use the candidate's recommended_deploy.bins_above exactly
    - active_bin: use the pre-fetched value above
 3. Report in this exact format (no tables, no extra sections):
-   🚀 DEPLOYED
+   ${process.env.DRY_RUN === "true" ? "🧪 SIMULATED DEPLOY — no transaction sent" : "🚀 DEPLOYED"}
 
    <pool name>
    <pool address>
@@ -825,7 +825,12 @@ IMPORTANT:
           await liveMessage?.toolFinish(name, result, success);
         },
       });
-    screenReport = content;
+    const simulatedDeploy = shadowChoices.some((choice) => choice.success && choice.dry_run);
+    screenReport = process.env.DRY_RUN === "true" && simulatedDeploy
+      ? content.replace(/🚀 DEPLOYED/g, "🧪 SIMULATED DEPLOY — no transaction sent")
+      : process.env.DRY_RUN === "true" && /🚀 DEPLOYED|🧪 SIMULATED DEPLOY/i.test(content)
+        ? "⛔ NO DEPLOY\n\nNo successful dry-run deploy_position was recorded. Check the action log."
+        : content;
     if (process.env.DRY_RUN === "true" && process.env.JEV_SHADOW_ENABLED === "true") {
       logAction({ tool: "screening_shadow_outcome", args: { cycle_id: shadowCycleId }, result: {
         candidate_addresses: passing.map(({ pool }) => pool.pool),

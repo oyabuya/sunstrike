@@ -156,6 +156,8 @@ npm run dev    # dry run — no on-chain transactions
 npm start      # uses configured mode; defaults to dry run
 ```
 
+For a bounded Telegram dry run, `node scripts/ten-dry-run-cycles.js` runs one screening immediately, then follows the configured cron expression for nine more cycles. It writes progress to `logs/ten-dry-run-cycles.json` and stops automatically after cycle 10. The script requires `DRY_RUN=true` and live disabled. Dry-run reports label simulated deployments explicitly.
+
 On startup Sunstrike fetches your wallet balance, open positions, and top pool candidates, then begins autonomous cycles immediately. Live execution is blocked unless both local live settings are explicitly set after the restart gates are satisfied.
 
 ---
