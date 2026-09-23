@@ -13,10 +13,10 @@ Terakhir diperbarui: 2026-09-23. Baca `AGENTS.md` dan `RESTART_AUDIT_2026-09-23.
 - Repo lokal: `/home/oyabuya/Documents/GITHUB/sunstrike`, branch `main`, remote `origin` di GitHub `oyabuya/sunstrike`.
 - VPS: `ssh hetzner-prod`, checkout pribadi `/home/ubuntu/projects/sunstrike`. Dependensi sudah dipasang. `.env` dan `user-config.json` di VPS berizin `600`; direktori proyek privat. Jangan mencetak atau menyalin rahasia ke repo/chat.
 - VPS disetel `DRY_RUN=true`, `SUNSTRIKE_LIVE_ENABLED=false`, `ALLOW_SELF_UPDATE=false`; `user-config.json` memakai `dryRun=true`, `maxPositions=1`, dan `autoCompoundEnabled=false`. Tidak ada service Sunstrike yang dijalankan. Layanan lain di VPS dibiarkan seperti semula dan tidak boleh dihapus sebagai bagian dari pekerjaan Sunstrike.
-- Key OpenRouter belum ada di `.env` VPS pada pemeriksaan terakhir. Konfigurasi VPS memilih `openai/gpt-6-luna` untuk peran screening, management, dan general. Fallback kode untuk gangguan provider tertentu ialah `openai/gpt-4.1-mini`.
+- Key OpenRouter sudah disiapkan langsung oleh pemilik di `.env` VPS. Konfigurasi VPS memilih `openai/gpt-6-luna` untuk peran screening, management, dan general. Fallback kode untuk gangguan provider tertentu ialah `openai/gpt-4.1-mini`.
 - `JEV_SHADOW_ENABLED=true` disiapkan di VPS, tetapi modul hanya memanggil Jev jika `OPENROUTER_API_KEY` tersedia dan `DRY_RUN=true`. Modul itu mencatat tiga skor (fee, momentum, risiko holder) untuk maksimal lima kandidat dan tidak mengubah input/keputusan Luna atau mengeksekusi transaksi.
 - Patch Jev sudah disinkronkan ke VPS dan enam tes Jev/restart lulus di sana. Catatan Jev kini terhubung ke pilihan tool Luna melalui `cycle_id`, disertai model/biaya provider dan kegagalan yang disanitasi. Belum ada hasil LP aktual; nilai tambah Jev tetap harus diuji terhadap baseline.
-- Setelah key dipasang pemilik, smoke test OpenRouter Luna tool call dan Jev Decisions API berhasil (HTTP 200); RPC, saldo Helius, dan pembacaan posisi juga berhasil (nol posisi). Telegram, Jupiter, LPAgent, dan GMGN belum dikonfigurasi. Perintah `cli.js screen` perlu hanya mengimpor fungsi screening tanpa menyalakan loop otomatis; patch entrypoint disiapkan untuk uji satu siklus.
+- Setelah key dipasang pemilik, smoke test OpenRouter Luna tool call dan Jev Decisions API berhasil (HTTP 200); RPC, saldo Helius, dan pembacaan posisi juga berhasil (nol posisi). Modul `recordJevShadow` berhasil dengan metrik sintetis. Satu `cli.js screen --dry-run --silent` selesai tanpa kandidat lolos filter, sehingga belum ada skor Jev atau pilihan Luna dari kandidat pasar nyata. CLI kini tidak menyalakan loop otomatis saat mengimpor `index.js`. Telegram, Jupiter, LPAgent, dan GMGN belum dikonfigurasi.
 - File `.env` lokal lama pernah berisi key dan mode live; mode lokal telah diubah ke dry run. **Jangan menyalin file/key/wallet lama ke VPS.** Key Jupiter yang sebelumnya tertanam di source harus dianggap terekspos dan diganti sebelum penggunaan live.
 
 ## Temuan yang sudah dibuktikan
@@ -24,7 +24,7 @@ Terakhir diperbarui: 2026-09-23. Baca `AGENTS.md` dan `RESTART_AUDIT_2026-09-23.
 - Riwayat lokal April 2026 berisi 28 catatan posisi tertutup. Empat bernilai awal nol; 24 sisanya mencatat 15 menang, 6 kalah, 3 datar, dan total PnL posisi **−$5,33**. Itu belum direkonsiliasi terhadap transaksi on-chain dan nilai wallet. Rata-rata menang +$0,28, rata-rata kalah −$1,60; kesenjangan besaran rugi adalah masalah utama.
 - Jalur screening sudah memiliki hard filter dan skor deterministik `candidate_score` (`tools/screening.js`, `evilpanda-policy.js`). Pada pemeriksaan di Hetzner, endpoint Meteora merespons, tetapi kriteria ketat saat itu menghasilkan nol kandidat. Jangan melonggarkan filter hanya agar ada transaksi.
 - Jev adalah model keputusan terstruktur untuk skor/kategori; skornya bukan probabilitas profit. Akurasi pada tugas klasifikasi umum belum membuktikan akurasi hasil LP. Shadow score perlu dipasangkan dengan hasil posisi untuk evaluasi.
-- Pemeriksaan terakhir: lima tes Jev/restart lulus di VPS. Belum ada pengujian autentikasi API Luna/Jev, tool calling, wallet/RPC, Telegram, atau transaksi pada checkout baru.
+- Pemeriksaan terakhir: enam tes Jev/restart lulus di VPS. Autentikasi Luna/Jev, tool calling Luna, wallet/RPC, dan modul Jev teruji. Telegram, transaksi, serta manfaat skor Jev pada kandidat pasar nyata belum diuji.
 
 ## Batas aman yang berlaku
 
@@ -37,7 +37,7 @@ Terakhir diperbarui: 2026-09-23. Baca `AGENTS.md` dan `RESTART_AUDIT_2026-09-23.
 
 1. Rekonsiliasi semua signature deploy/claim/close/swap April dengan transaksi Solana final. Selidiki empat catatan bernilai awal nol dan perbedaan log; simpan artefak lama utuh.
 2. Rancang serta uji batas modal $100 dan rugi total $20 pada nilai portofolio yang dapat diverifikasi, termasuk perilaku ketika RPC/price feed gagal dan saat posisi masih terbuka. Putuskan ukuran posisi/cadangan gas berdasarkan biaya aktual.
-3. Setelah pemilik menaruh key **langsung di VPS** (`.env.example` sebagai panduan), verifikasi koneksi OpenRouter Luna/Jev, format laporan Telegram, RPC/Helius/Jupiter, data risiko, dan izin chat. Jangan tampilkan nilai key dalam log atau laporan.
+3. Saat credential opsional tersedia, verifikasi format laporan Telegram, Jupiter, data risiko tambahan, dan izin chat. Jangan tampilkan nilai key dalam log atau laporan.
 4. Jalankan evaluasi dry run dengan kandidat bertimestamp: hard-filter result, skor deterministik, Jev score/confidence, pilihan Luna, alasan tidak entry, biaya prediksi, dan hasil pasar setelah horizon yang ditentukan. Ukur apakah Jev menambah kualitas keputusan dibanding baseline tanpa Jev.
 5. Bahas live canary kecil hanya setelah langkah di atas memberi dasar yang dapat diperiksa. Aktifkan live dengan keputusan eksplisit pemilik, lalu cocokkan tiap transaksi dan wallet sebelum entry berikutnya.
 
