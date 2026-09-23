@@ -125,15 +125,8 @@ export async function getVolumeTrend(poolAddress) {
  * Fetch pools from the Meteora Pool Discovery API.
  * Returns condensed data optimized for LLM consumption (saves tokens).
  */
-export async function discoverPools({
-  page_size = 50,
-  overrides = {},
-} = {}) {
-  const s = { ...config.screening, ...overrides };
-  // SOL mint — used for post-filter (not API query — API may not support quote_token_mint parameter)
-  const SOL_MINT = config.tokens.SOL;
-
-  const filters = [
+export function buildDiscoveryFilters(s = config.screening, now = Date.now()) {
+  return [
     "base_token_has_critical_warnings=false",
     "quote_token_has_critical_warnings=false",
     "base_token_has_high_single_ownership=false",
@@ -149,9 +142,20 @@ export async function discoverPools({
     `fee_active_tvl_ratio>=${s.minFeeActiveTvlRatio}`,
     `base_token_organic_score>=${s.minOrganic}`,
     "quote_token_organic_score>=60",
-    s.minTokenAgeHours != null ? `base_token_created_at<=${Date.now() - s.minTokenAgeHours * 3_600_000}` : null,
-    s.maxTokenAgeHours != null ? `base_token_created_at>=${Date.now() - s.maxTokenAgeHours * 3_600_000}` : null,
-  ].filter(Boolean).join("&&");
+    s.minTokenAgeHours != null ? `base_token_created_at<=${now - s.minTokenAgeHours * 3_600_000}` : null,
+    s.maxTokenAgeHours != null ? `base_token_created_at>=${now - s.maxTokenAgeHours * 3_600_000}` : null,
+  ].filter(Boolean);
+}
+
+export async function discoverPools({
+  page_size = 50,
+  overrides = {},
+} = {}) {
+  const s = { ...config.screening, ...overrides };
+  // SOL mint — used for post-filter (not API query — API may not support quote_token_mint parameter)
+  const SOL_MINT = config.tokens.SOL;
+
+  const filters = buildDiscoveryFilters(s).join("&&");
 
   const url = `${POOL_DISCOVERY_BASE}/pools?` +
     `page_size=${page_size}` +
@@ -167,7 +171,8 @@ export async function discoverPools({
 
   const data = await res.json();
 
-  const condensed = (data.data || []).map(condensePool);
+  if (!Array.isArray(data.data)) throw new Error("Pool Discovery API returned invalid pool data");
+  const condensed = data.data.map(condensePool);
 
   // Hard-filter blacklisted tokens and blocked deployers (what pool discovery already gave us)
   let pools = condensed.filter((p) => {
@@ -266,6 +271,7 @@ export async function discoverPools({
 
   return {
     total: data.total,
+    api_returned: condensed.length,
     pools,
   };
 }
@@ -277,7 +283,8 @@ export async function discoverPools({
 export async function getTopCandidates({ limit = 10 } = {}) {
   const { config } = await import("../config.js");
   const s = config.screening;
-  let { pools } = await discoverPools({ page_size: 50 });
+  const discovery = await discoverPools({ page_size: 50 });
+  const { pools } = discovery;
   const filteredOut = [];
   let screeningProfile = "strict";
   let totalScreened = pools.length;
@@ -309,8 +316,7 @@ export async function getTopCandidates({ limit = 10 } = {}) {
         return false;
       }
       return true;
-    })
-    .slice(0, limit);
+    });
 
   let eligible = buildBaseEligible(pools);
   const evilPandaThresholds = getEvilPandaThresholds(s);
@@ -660,6 +666,7 @@ return true;
     candidates: eligible,
     total_eligible: eligible.length,
     total_screened: totalScreened,
+    discovery: { api_matches: discovery.total, api_returned: discovery.api_returned, local_passed: pools.length },
     filtered_examples: filteredOut.slice(0, 3),
     screening_profile: screeningProfile,
   };

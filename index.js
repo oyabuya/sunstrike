@@ -17,7 +17,7 @@ import { generateBriefing } from "./briefing.js";
 import { getLastBriefingDate, setLastBriefingDate, getTrackedPosition, setPositionInstruction, updatePnlAndCheckExits, queuePeakConfirmation, resolvePendingPeak, queueTrailingDropConfirmation, resolvePendingTrailingDrop } from "./state.js";
 import { getActiveStrategy } from "./strategy-library.js";
 import { recordPositionSnapshot, recallForPool, addPoolNote } from "./pool-memory.js";
-import { checkSmartWalletsOnPool, getSmartWalletCandidatePools } from "./smart-wallets.js";
+import { checkSmartWalletsOnPool } from "./smart-wallets.js";
 import { getTokenNarrative, getTokenInfo } from "./tools/token.js";
 import { getPoolDetail } from "./tools/screening.js";
 import { computeEvilPandaDeployPlan, formatEvilPandaDeployPlan, getEvilPandaThresholds } from "./evilpanda-policy.js";
@@ -561,29 +561,11 @@ export async function runScreeningCycle({ silent = false } = {}) {
       return hydrated;
     }
 
-    // Fetch top candidates, then fallback to smart-wallet pools if needed.
-    const topCandidates = await getTopCandidates({ limit: 10 }).catch(() => null);
+    // Discovery failures are failures, not evidence of an empty market.
+    const topCandidates = await getTopCandidates({ limit: 10 });
     let candidatePools = (topCandidates?.candidates || topCandidates?.pools || []).slice(0, 10);
     let earlyFilteredExamples = topCandidates?.filtered_examples || [];
     let candidateSource = topCandidates?.screening_profile || "strict";
-
-    if (candidatePools.length === 0) {
-      let smartWalletFallback = await getSmartWalletCandidatePools({ min_wallets: 2 }).catch(() => null);
-      if (!smartWalletFallback?.pools?.length) {
-        smartWalletFallback = await getSmartWalletCandidatePools({ min_wallets: 1 }).catch(() => null);
-      }
-      if (smartWalletFallback?.pools?.length) {
-        candidatePools = smartWalletFallback.pools.map((p) => ({
-          pool_address: p.pool_address,
-          pool_name: p.pool_name,
-          base_mint: p.base_mint,
-          smart_wallet_signal: p.signal,
-        }));
-        candidateSource = "smart-wallet-fallback";
-        earlyFilteredExamples = [];
-        log("screening", `Smart-wallet fallback recovered ${candidatePools.length} candidate pool(s)`);
-      }
-    }
 
     const allCandidates = await hydrateCandidates(candidatePools, { label: candidateSource });
 
@@ -638,24 +620,6 @@ export async function runScreeningCycle({ silent = false } = {}) {
     });
     let passing = applyPostReconFilters(allCandidates);
 
-    if (passing.length === 0 && candidateSource !== "smart-wallet-fallback") {
-      const smartWalletFallback = await getSmartWalletCandidatePools({ min_wallets: 2 }).catch(() => null);
-      const fallbackPools = smartWalletFallback?.pools?.length
-        ? smartWalletFallback.pools.map((p) => ({
-            pool_address: p.pool_address,
-            pool_name: p.pool_name,
-            base_mint: p.base_mint,
-            smart_wallet_signal: p.signal,
-          }))
-        : [];
-      if (fallbackPools.length > 0) {
-        candidateSource = "smart-wallet-fallback";
-        const fallbackCandidates = await hydrateCandidates(fallbackPools, { label: candidateSource });
-        passing = applyPostReconFilters(fallbackCandidates);
-        log("screening", `Smart-wallet fallback after recon yielded ${passing.length} passing candidate(s)`);
-      }
-    }
-
     if (passing.length === 0) {
       const combined = filteredOut.length > 0 ? filteredOut : earlyFilteredExamples;
       const combinedExamples = combined.slice(0, 3)
@@ -663,7 +627,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
         .join("\n");
       screenReport = combinedExamples
         ? `⛔ NO DEPLOY\n\nNo candidates passed screening.\nFiltered examples:\n${combinedExamples}`
-        : `⛔ NO DEPLOY\n\nNo candidates passed screening (launchpad / holder-quality rules).`;
+        : `⛔ NO DEPLOY\n\nNo candidates passed screening. API matches: ${topCandidates.discovery?.api_matches ?? "unknown"}; fetched: ${topCandidates.discovery?.api_returned ?? "unknown"}; local filters passed: ${topCandidates.total_screened}; enriched candidates: ${candidatePools.length}.`;
       return screenReport;
     }
 

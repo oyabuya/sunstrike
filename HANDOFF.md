@@ -55,3 +55,10 @@ Terakhir diperbarui: 2026-09-23. Baca `AGENTS.md` dan `RESTART_AUDIT_2026-09-23.
 - Lihat `STRATEGY_REVIEW_2026-09-24.md`: riset resmi Meteora, perbandingan Spot/Curve/Bid-Ask, dan batas bukti meta terbaru. Tidak ada klaim strategi optimal atau return terjamin.
 - Patch menghapus fallback screening longgar, menghormati batas konsentrasi pemilik, mengoreksi jarak harga bin geometris, dan menghapus kewajiban hold posisi rugi dari prompt serta gate low-yield. Spot tetap baseline dry run.
 - Syntax dan tes strategy-policy/restart-safety/jev-shadow lulus lokal. Batas loss portofolio $20 belum diimplementasikan; live tetap terkunci. Lebar rentang, sizing, stop loss lama dan minimum umur exit belum dioptimasi berdasarkan hasil.
+
+## Diagnosis screening kosong 2026-09-24 WIB
+
+- Probe read-only VPS bertimestamp 2026-09-23T17:30:52Z: filter kumulatif holder/market cap masih 11.134 pool; penambahan volume >= $1.000 pada timeframe 5m menghasilkan 4; kombinasi lengkap menghasilkan 0. Sebelum batas umur maksimum 72 jam masih 1. Query berurutan bukan snapshot atomik: beberapa hitungan naik karena perubahan window/index API, sehingga bukan atribusi kausal pasti.
+- Profil sekarang sangat sempit: token umur 12–72 jam, market cap $250k–$10m, TVL $10k–$150k, bin step 80–125, quote SOL. Ini profil token spekulatif muda, bukan pencarian semua LP risiko rendah. Tidak mengubah hard gate untuk memaksa entry.
+- Ditemukan API failure ditelan menjadi kandidat kosong, truncation sebelum enrichment, dan fallback smart-wallet tambahan di orchestration yang tertinggal dari patch sebelumnya. Diperbaiki: error diteruskan, pemilihan top-N setelah enrichment seluruh halaman (maksimal 50), fallback bypass dihapus, laporan kosong memuat hitungan tahap.
+- `scripts/screening-funnel.js` mengukur filter kumulatif read-only; output diagnostik tidak boleh menjadi kandidat transaksi. Runner yang sudah aktif tetap memakai modul lama sampai proses berikutnya; tidak direstart agar batas 10 siklus tidak terulang.
