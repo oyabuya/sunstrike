@@ -1,5 +1,7 @@
 # Sunstrike
 
+> Restart status (2026-09-23): dry-run preparation only. Read [the restart audit](RESTART_AUDIT_2026-09-23.md) before using capital. Live now requires both `DRY_RUN=false` and `SUNSTRIKE_LIVE_ENABLED=true`; the example environment defaults to dry run.
+
 **Autonomous Meteora DLMM liquidity management agent for Solana, powered by LLMs.**
 
 Sunstrike is a fork that started from `yunus-0x/meridian` and has since evolved into its own strategy stack. It no longer runs a head-to-head copy of the original repo approach. Instead, it uses a strategy fusion: the original Meridian framework and execution flow combined with EvilPanda-inspired screening, exit logic, and a different risk-management posture.

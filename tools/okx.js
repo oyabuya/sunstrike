@@ -108,7 +108,14 @@ function collectRiskEntries(section) {
 export async function getRiskFlags(tokenAddress, chainId = CHAIN_SOLANA) {
   const ts = Date.now();
   const path = `/priapi/v1/dx/market/v2/risk/new/check?chainId=${chainId}&tokenContractAddress=${tokenAddress}&t=${ts}`;
-  const data = await okxGet(path);
+  const rawData = await okxGet(path);
+  const data = Array.isArray(rawData) ? rawData[0] : rawData;
+  if (!data || typeof data !== "object" || !(
+    data.allAnalysis || data.swapAnalysis || data.contractAnalysis || data.extraAnalysis ||
+    data.riskLevel != null || data.riskControlLevel != null
+  )) {
+    throw new Error("OKX risk response contains no token analysis");
+  }
 
   const entries = [
     ...collectRiskEntries(data?.allAnalysis),

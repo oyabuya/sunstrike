@@ -140,6 +140,18 @@ const toolMap = {
     return { error: "invalid mode" };
   },
   update_config: ({ changes, reason = "" }) => {
+    // Capital and anti-rug limits are owner policy, never agent-tunable.
+    // A model response or Telegram prompt must not loosen them at runtime.
+    const OWNER_ONLY_KEYS = new Set([
+      "stoplosspct", "maxpositions", "maxdeployamount", "deployamountsol",
+      "positionsizepct", "gasreserve", "minsoltoopen", "autocompoundenabled",
+      "autocompoundmode", "antirugstrict", "requirerenouncedmint",
+      "mintokenfeessol", "maxbundlepct", "maxtop10pct", "maxrattraderpct",
+      "maxdevholdpct", "maxbotholderspct",
+    ]);
+    if (Object.keys(changes || {}).some((key) => OWNER_ONLY_KEYS.has(key.toLowerCase()))) {
+      return { success: false, reason: "Capital and safety limits can only be changed by the owner in local configuration." };
+    }
     // Flat key → config section mapping (covers everything in config.js)
     const CONFIG_MAP = {
       // screening
@@ -369,7 +381,7 @@ export async function executeTool(name, args) {
       success,
     });
 
-    if (success) {
+    if (success && !result?.dry_run) {
       if (name === "swap_token" && result.tx) {
         notifySwap({ inputSymbol: args.input_mint?.slice(0, 8), outputSymbol: args.output_mint === "So11111111111111111111111111111111111111112" || args.output_mint === "SOL" ? "SOL" : args.output_mint?.slice(0, 8), amountIn: result.amount_in, amountOut: result.amount_out, tx: result.tx }).catch(() => {});
       } else if (name === "deploy_position") {
@@ -518,6 +530,9 @@ async function runSafetyChecks(name, args) {
       } catch {
         // non-blocking — skip check if pool detail unavailable
       }
+      if (process.env.DRY_RUN !== "true" && (!poolData?.quote?.mint || !poolData?.base?.mint)) {
+        return { pass: false, reason: "Deploy blocked: current pool and token mints could not be verified." };
+      }
 
       // Final anti-rug preflight gate (strict mode), applies to ALL deploy paths.
       if (config.screening.antiRugStrict) {
@@ -546,6 +561,10 @@ async function runSafetyChecks(name, args) {
             }
           } catch {
             // non-blocking — provider unavailable, rely on existing checks
+          }
+
+          if (process.env.DRY_RUN !== "true" && (!okxRisk || !tokenInfo || (process.env.GMGN_API_KEY && !gmgnSec))) {
+            return { pass: false, reason: "Deploy blocked: required live token-risk data is unavailable." };
           }
 
           if (okxRisk?.is_rugpull === true) {

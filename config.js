@@ -17,6 +17,16 @@ if (u.llmBaseUrl) process.env.LLM_BASE_URL      ||= u.llmBaseUrl;
 if (u.llmApiKey)  process.env.LLM_API_KEY       ||= u.llmApiKey;
 if (u.dryRun !== undefined) process.env.DRY_RUN ||= String(u.dryRun);
 
+// A missing or mistyped mode must never turn a read-only run into a live run.
+// Live execution requires two explicit local settings, independent of the agent.
+if (process.env.DRY_RUN === "false") {
+  if (process.env.SUNSTRIKE_LIVE_ENABLED !== "true") {
+    throw new Error("Live mode blocked: set SUNSTRIKE_LIVE_ENABLED=true explicitly before DRY_RUN=false");
+  }
+} else {
+  process.env.DRY_RUN = "true";
+}
+
 export const config = {
   // ─── Risk Limits ─────────────────────────
   risk: {
