@@ -285,10 +285,23 @@ export async function discoverPools({
 export async function getTopCandidates({ limit = 10 } = {}) {
   const { config } = await import("../config.js");
   const s = config.screening;
-  const discovery = await discoverPools({ page_size: 50 });
+  let discovery = await discoverPools({ page_size: 50 });
+  // A five-minute volume window can be empty even while an established pool
+  // has sustained activity. Broaden the observation window, not the risk caps.
+  let screeningProfile = "strict";
+  if (discovery.pools.length === 0 && s.timeframe === "5m") {
+    const fallback = await discoverPools({ page_size: 50, overrides: { timeframe: "2h" } }).catch((error) => {
+      log("screening", `2h discovery fallback unavailable: ${error.message}`);
+      return null;
+    });
+    if (fallback) {
+      discovery = fallback;
+      screeningProfile = "2h activity fallback";
+      log("screening", `5m discovery empty; 2h activity window found ${fallback.pools.length} pool(s)`);
+    }
+  }
   const { pools } = discovery;
   const filteredOut = [];
-  let screeningProfile = "strict";
   let totalScreened = pools.length;
 
   // Exclude pools where the wallet already has an open position

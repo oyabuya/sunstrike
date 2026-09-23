@@ -22,11 +22,18 @@ Sunstrike runs continuous screening and management cycles, deploying capital int
 ## What it does
 
 - **Screens pools** — scans Meteora DLMM pools against configurable thresholds, then applies fusion filters from Meridian, EvilPanda, GMGN, OKX, pool memory, and launchpad risk controls before the LLM sees the shortlist
+
 - **Manages positions** — monitors, claims fees, and closes LP positions autonomously using a layered flow: deterministic JS exits first, chart-based EvilPanda signals second, LLM judgment only when action is required
 - **Learns from performance** — records closed-position outcomes, studies strong LPers or smart wallets, and evolves parts of screening based on real position history
 - **Discord signals** — optional Discord listener watches LP Army channels for Solana token calls and queues them for screening
 - **Telegram chat** — full agent chat via Telegram, plus cycle reports and OOR alerts
 - **Claude Code integration** — run AI-powered screening and management directly from your terminal using Claude Code slash commands
+
+If the default 5m discovery window finds no pools, screening retries with a 2h
+activity window using the same token age, market cap, holder, and safety limits.
+The returned profile identifies the fallback; final Jupiter audit and deploy
+preflight still apply. This admits pools with sustained 2h activity even when
+their latest 5m volume is below the 5m threshold.
 
 ---
 
