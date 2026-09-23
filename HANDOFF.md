@@ -19,6 +19,7 @@ Terakhir diperbarui: 2026-09-23. Baca `AGENTS.md` dan `RESTART_AUDIT_2026-09-23.
 - Setelah key dipasang pemilik, smoke test OpenRouter Luna tool call dan Jev Decisions API berhasil (HTTP 200); RPC, saldo Helius, dan pembacaan posisi juga berhasil (nol posisi). Modul `recordJevShadow` berhasil dengan metrik sintetis. Satu `cli.js screen --dry-run --silent` selesai tanpa kandidat lolos filter, sehingga belum ada skor Jev atau pilihan Luna dari kandidat pasar nyata. CLI kini tidak menyalakan loop otomatis saat mengimpor `index.js`. Telegram, Jupiter, LPAgent, dan GMGN belum dikonfigurasi.
 - Persiapan Telegram: `.env` chat ID kini diutamakan atas nilai lama `user-config.json`; `scripts/telegram-check.js` memvalidasi token dan menampilkan chat/user ID tanpa mencetak token, dengan `--send-test` untuk pesan uji eksplisit.
 - Pemilik membuat `@Sunstrike_Bot` dan mengirim `/start` dari satu chat privat. Chat ID dan allowed user ID dari pesan itu sudah ditulis ke `.env` VPS (mode `600`); `getMe`, `getUpdates`, dan `sendMessage` uji berhasil. Bot Sunstrike belum dijalankan sebagai service.
+- Runner terbatas `scripts/ten-dry-run-cycles.js` aktif di VPS sejak 2026-09-23 16:32 UTC, PID awal 715946. Target 10 screening: satu langsung lalu cron `*/45 * * * *`, dengan laporan Telegram dan status di `logs/ten-dry-run-cycles.json`. Siklus pertama selesai tanpa kandidat lolos; `DRY_RUN=true`, live tetap terkunci. Runner berhenti otomatis setelah siklus ke-10 dan tidak menjalankan management cron atau polling perintah Telegram.
 - File `.env` lokal lama pernah berisi key dan mode live; mode lokal telah diubah ke dry run. **Jangan menyalin file/key/wallet lama ke VPS.** Key Jupiter yang sebelumnya tertanam di source harus dianggap terekspos dan diganti sebelum penggunaan live.
 
 ## Temuan yang sudah dibuktikan
@@ -48,3 +49,9 @@ Terakhir diperbarui: 2026-09-23. Baca `AGENTS.md` dan `RESTART_AUDIT_2026-09-23.
 - Ubah kode kecil dan terarah; jalankan `node --check` pada file berubah, `node --test test/jev-shadow.test.js test/restart-safety.test.js`, lalu pemeriksaan spesifik sesuai risiko perubahan.
 - Ikuti `AGENTS.md`: analisis → patch → verifikasi → commit → push; sinkronkan checkout VPS jika perubahan relevan. Periksa status git lokal/VPS sebelum mengubahnya.
 - Gunakan `RESTART_AUDIT_2026-09-23.md` untuk rincian bukti dan alasan tiap pengaman; perbarui handoff ini bila keputusan, konfigurasi, atau status live berubah.
+
+## Evaluasi strategi 2026-09-24
+
+- Lihat `STRATEGY_REVIEW_2026-09-24.md`: riset resmi Meteora, perbandingan Spot/Curve/Bid-Ask, dan batas bukti meta terbaru. Tidak ada klaim strategi optimal atau return terjamin.
+- Patch menghapus fallback screening longgar, menghormati batas konsentrasi pemilik, mengoreksi jarak harga bin geometris, dan menghapus kewajiban hold posisi rugi dari prompt serta gate low-yield. Spot tetap baseline dry run.
+- Syntax dan tes strategy-policy/restart-safety/jev-shadow lulus lokal. Batas loss portofolio $20 belum diimplementasikan; live tetap terkunci. Lebar rentang, sizing, stop loss lama dan minimum umur exit belum dioptimasi berdasarkan hasil.

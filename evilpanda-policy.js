@@ -12,13 +12,13 @@ export function computeEvilPandaDeployPlan({ volatility = null, binStep = null }
   if (safeStep >= 50) binsBelow = Math.round(binsBelow * 1.2);
   binsBelow = Math.min(300, Math.max(20, binsBelow));
 
-  const downsidePct = Number((binsBelow * safeStep / 100).toFixed(1));
+  const downsidePct = Number((100 * (1 - Math.pow(1 + safeStep / 10000, -binsBelow))).toFixed(1));
 
   return {
     strategy: "spot",
     bins_below: binsBelow,
     bins_above: DEFAULT_BINS_ABOVE,
-    total_bins: binsBelow + DEFAULT_BINS_ABOVE,
+    total_bins: binsBelow + DEFAULT_BINS_ABOVE + 1,
     downside_buffer_pct: downsidePct,
   };
 }
@@ -112,11 +112,11 @@ export function getRelaxedEvilPandaOverrides(screening = config.screening) {
 
 export function getEvilPandaThresholds(screening = config.screening) {
   return {
-    maxDevHoldPct: Math.max(screening?.maxDevHoldPct ?? 5, 5),
-    maxTop10Pct: Math.max(screening?.maxTop10Pct ?? 30, 45),
-    maxRatTraderPct: Math.max(screening?.maxRatTraderPct ?? 30, 30),
+    maxDevHoldPct: Math.min(screening?.maxDevHoldPct ?? 5, 5),
+    maxTop10Pct: Math.min(screening?.maxTop10Pct ?? 30, 30),
+    maxRatTraderPct: Math.min(screening?.maxRatTraderPct ?? 30, 30),
     maxBundlerSoftPct: 45,
-    maxBundlerHardPct: 70,
+    maxBundlerHardPct: Math.min(screening?.maxBundlePct ?? 60, 60),
     minVolumeTrendPct: 10,
     severeVolumeTrendPct: -50,
   };

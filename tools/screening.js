@@ -3,7 +3,7 @@ import { isBlacklisted } from "../token-blacklist.js";
 import { isDevBlocked, getBlockedDevs } from "../dev-blocklist.js";
 import { log } from "../logger.js";
 import { isBaseMintOnCooldown, isPoolOnCooldown } from "../pool-memory.js";
-import { getRelaxedEvilPandaOverrides, scoreEvilPandaCandidate, getEvilPandaThresholds } from "../evilpanda-policy.js";
+import { scoreEvilPandaCandidate, getEvilPandaThresholds } from "../evilpanda-policy.js";
 
 const FETCH_TIMEOUT_MS = 15_000;
 
@@ -324,47 +324,8 @@ export async function getTopCandidates({ limit = 10 } = {}) {
     severeVolumeTrendPct,
   } = evilPandaThresholds;
 
-  if (eligible.length === 0) {
-    const relaxedOverrides = getRelaxedEvilPandaOverrides(config.screening);
-    log("screening", `Strict screening returned no candidates — retrying with relaxed EvilPanda fallback ${JSON.stringify(relaxedOverrides)}`);
-    const relaxedDiscovery = await discoverPools({ page_size: 75, overrides: relaxedOverrides }).catch(() => ({ pools: [] }));
-    totalScreened = Math.max(totalScreened, relaxedDiscovery.pools?.length ?? 0);
-    eligible = buildBaseEligible(relaxedDiscovery.pools || []);
-    screeningProfile = "relaxed";
-  } else if (eligible.length < Math.max(3, Math.ceil(limit / 2))) {
-    const relaxedOverrides = getRelaxedEvilPandaOverrides(config.screening);
-    log("screening", `Strict screening returned only ${eligible.length} candidate(s) — topping up with relaxed EvilPanda fallback`);
-    const relaxedDiscovery = await discoverPools({ page_size: 75, overrides: relaxedOverrides }).catch(() => ({ pools: [] }));
-    totalScreened = Math.max(totalScreened, relaxedDiscovery.pools?.length ?? totalScreened);
-    const relaxedEligible = buildBaseEligible(relaxedDiscovery.pools || []);
-    const seen = new Set(eligible.map((p) => p.pool));
-    for (const pool of relaxedEligible) {
-      if (seen.has(pool.pool)) continue;
-      eligible.push(pool);
-      seen.add(pool.pool);
-    }
-    screeningProfile = "balanced";
-  }
+  // An empty strict result is valid. Alternative discovery must not bypass hard filters.
 
-  if (eligible.length === 0) {
-    const { getSmartWalletCandidatePools } = await import("../smart-wallets.js");
-    let smartWalletFallback = await getSmartWalletCandidatePools({ min_wallets: 2 }).catch(() => null);
-    if (!smartWalletFallback?.pools?.length) {
-      smartWalletFallback = await getSmartWalletCandidatePools({ min_wallets: 1 }).catch(() => null);
-    }
-    if (smartWalletFallback?.pools?.length) {
-      const smartWalletPools = smartWalletFallback.pools.map((p) => ({
-        pool: p.pool_address,
-        name: p.pool_name,
-        base: { mint: p.base_mint, symbol: p.pool_name?.split("/")[0] || null },
-        smart_wallet_signal: p.signal,
-      }));
-      eligible = buildBaseEligible(smartWalletPools);
-      totalScreened = Math.max(totalScreened, smartWalletPools.length);
-      screeningProfile = "smart-wallet-fallback";
-      log("screening", `Smart-wallet fallback recovered ${eligible.length} candidate(s)`);
-    }
-  }
 
   if (s.avoidPvpSymbols && eligible.length > 0) {
     await enrichPvpRisk(eligible);

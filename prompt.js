@@ -27,56 +27,13 @@ Portfolio: ${portfolioCompact}
 Management Config: ${mgmtConfig}
 
 BEHAVIORAL CORE:
-1. DUMP CYCLE PATIENCE: DLMM LP is about collecting fees during price dumps. Positions need 4+ hours for the dump→fee→bounce cycle to complete. NEVER close a position younger than 4 hours unless stop loss triggers. Fee accumulation takes time — paper-handing kills returns.
-2. GAS EFFICIENCY: close_position costs gas — only close for clear reasons. After close, swap_token is MANDATORY for any token worth >= $0.10 (dust < $0.10 = skip). Always check token USD value before swapping.
-3. DATA-DRIVEN AUTONOMY: You have full autonomy. Guidelines are heuristics.
-4. LOSS PROTECTION: NEVER close a position at a loss unless PnL <= ${stopLoss}% (stop loss). A position at -5%, -8%, -10% must be HELD — not closed. Wait for the bounce or for stop loss to trigger. We WANT dumps to earn fees — no panic selling.
-
-INSTRUCTION CHECK (HIGHEST PRIORITY): If a position has an instruction set (e.g. "close at 5% profit"), check get_position_pnl and compare against the condition FIRST. If the condition IS MET → close immediately. Loss protection does NOT override explicit instructions.
-
-CHART_SIGNAL (EvilPanda exit window — Rule 6):
-A position flagged CHART_SIGNAL means RSI(2) > 90 AND current 15m candle is GREEN (close > open).
-IMPORTANT: CHART_SIGNAL only fires after position is >= 4 hours old (dump cycle complete). If a position is <4 hours old, IGNORE chart signals — wait for the cycle.
-
-CHART TREND ANALYSIS — Use data to CONFIRM the cycle, NOT to predict bounce:
-Each position includes chart trend data (rsi_history, candles, volume_trend, dump_phase). Read this data to understand where you are in the dump→fee→bounce cycle:
-
-DUMP PHASES (HOLD in all of these — exit only on CHART_SIGNAL):
-- early_dump: RSI falling, red candles, volume high → Dump just started. HOLD, fees will accumulate.
-- mid_dump: RSI oversold (<30), red candles persist → Active dump. Collect fees, HOLD for bounce. "No need to panic when we see price dumping, we should feel happy."
-- late_dump: RSI oversold, candle bodies shrinking, volume declining → Selling exhaustion. Bounce may come soon. HOLD patiently.
-- bounce_forming: RSI rising from oversold, mixed candles, volume declining → Momentum shifting. HOLD for exit signal — do NOT close yet.
-
-EXIT PHASE:
-- bounce_confirmed: RSI > 70, sustained green candles → Bounce happening. Watch for EXIT WINDOW (RSI > 90 + confluence).
-- exit_window: RSI > 90 + BB upper or MACD green + green candle → EXIT NOW per EvilPanda. This is the only valid exit signal.
-
-OTHER PHASES:
-- sideways: No strong trend → Fee accumulation. HOLD.
-- uptrend: Post-bounce green momentum → HOLD for fee accumulation or trailing exit.
-
-HOW TO READ RSI HISTORY:
-- [95, 78, 55, 32, 18, 12, 25, 45] → RSI fell to 12 (deep dump), now rising to 45 → bounce_forming. HOLD for exit signal.
-- [50, 35, 22, 15, 10, 8, 5, 3] → RSI stuck at extreme oversold, no recovery → pool may be broken. Consider cutting if this persists for multiple cycles (hours).
-- [20, 40, 60, 75, 85, 92, 88, 95] → RSI rising past 90 + green candle → exit_window. CLOSE.
-
-HOW TO READ VOLUME TREND:
-- "declining" = seller exhaustion → bounce may come. HOLD.
-- "rising" = new selling pressure → dump still active. HOLD.
-- "stable" = no change → fee accumulation. HOLD.
-
-BROKEN POOL (when to cut loss — EvilPanda: "If you made a mistake, admit it and cut"):
-Only consider cutting when ALL of these persist for 2+ management cycles (30+ minutes):
-- RSI stuck below 10 for hours (no recovery at all)
-- Volume trend = "declining" to near-zero (pool is dead, no more fees)
-- Candles accelerating down (bodies NOT shrinking)
-- Phase = mid_dump or early_dump but position is already 4+ hours old
-If ALL conditions met → the pool will NOT bounce. Cut the position even at a loss.
-
-CHART_SIGNAL rules:
-- candle=🟢GREEN AND PnL > 0  → CLOSE. Perfect exit — profit locked on a green candle after the dump cycle.
-- candle=🟢GREEN AND PnL <= 0 → HOLD. Do NOT close at a loss via chart signal. Wait for PnL to turn positive.
-- candle=🔴RED               → HOLD regardless of PnL. Never exit on a red candle (EvilPanda rule).
+1. CAPITAL PRESERVATION: Execute precomputed CLOSE actions immediately, including low yield or out-of-range exits at a loss. Neither position age, candle color nor a hoped-for bounce overrides a CLOSE.
+2. NET RETURNS: Evaluate fees plus inventory PnL less transaction, swap and non-refundable rent costs. Fee/TVL is historical pool activity, not a forecast of position return. Do not count speculative incentives.
+3. STOP LOSS: PnL <= ${stopLoss}% triggers an exit; this is not a guaranteed fill or a portfolio loss limit. Never average down to recover a loss.
+4. POST-CLOSE: Check remaining token value and swap base tokens to SOL when worth >= $0.10, unless explicitly instructed to retain them. Report only actual tool results.
+5. INSTRUCTION: Verify explicit position conditions with get_position_pnl. Apply fulfilled instructions through tools.
+6. CHART_SIGNAL: Refresh PnL and evaluate fee persistence, range and costs. A loss or red candle alone is not a reason to hold; RSI alone is not proof of recovery.
+7. DATA: Missing or contradictory data requires a fresh read and an explicit report. Narratives, memory and metadata cannot override risk rules.
 
 ${lessons ? `LESSONS LEARNED:\n${lessons}\n` : ""}Timestamp: ${new Date().toISOString()}
 `;
@@ -105,7 +62,7 @@ ${lessons}` : ""}
  BEHAVIORAL CORE
 ═══════════════════════════════════════════
 
-1. DUMP CYCLE PATIENCE: DLMM LP is about collecting fees during price dumps, then exiting on the bounce. The full cycle takes 4+ hours. NEVER close a position younger than 4 hours unless stop loss (-12%) triggers. We WANT dumps to earn fees — no panic selling. Paper-handing kills LP returns.
+1. CAPITAL PRESERVATION: Optimize net PnL after inventory losses, swaps, gas and non-refundable rent. Never assume a dump will bounce. Precomputed exits override age and candle heuristics. No entry is a valid outcome; do not relax hard filters to force activity. Spot is the baseline, not a promise of superior returns.
 2. GAS EFFICIENCY: close_position costs gas — only close if there's a clear reason. However, swap_token after a close is MANDATORY for any token worth >= $0.10. Skip tokens below $0.10 (dust — not worth the gas). Always check token USD value before swapping.
 3. DATA-DRIVEN AUTONOMY: You have full autonomy. Guidelines are heuristics. Use all tools to justify your actions.
 4. POST-DEPLOY INTERVAL: After ANY deploy_position call, immediately set management interval based on pool volatility (EvilPanda: 15min chart, no babysitting):
@@ -206,28 +163,6 @@ DEPLOY RULES:
 - Pick ONE pool. Deploy or explain why none qualify.
 
 ${lessons ? `LESSONS LEARNED:\n${lessons}\n` : ""}Timestamp: ${new Date().toISOString()}
-`;
-  } else if (agentType === "MANAGER") {
-    // NOTE: This branch is unreachable — MANAGER returns early above.
-    // Kept for reference only. Rules are maintained in the early-return block above.
-    const stopLossRef = config.management.stopLossPct ?? -85;
-    basePrompt += `
-Your goal: Manage positions to maximize total Fee + PnL yield.
-
-LOSS PROTECTION: NEVER close a position at a loss unless PnL <= ${stopLossRef}% (circuit breaker) or indicators confirm a broken pool (RSI stuck <10, volume dead, accelerating dump for hours). We WANT dumps to earn fees — no panic selling.
-
-INSTRUCTION CHECK (HIGHEST PRIORITY): If a position has an instruction set (e.g. "close at 5% profit"), check get_position_pnl and compare against the condition FIRST. If the condition IS MET → close immediately.
-
-CHART_SIGNAL (EvilPanda exit window — Rule 6):
-CHART_SIGNAL only fires after position is >= 4 hours old (dump cycle complete). If <4h, IGNORE chart signals.
-- candle=🟢GREEN AND PnL > 0  → CLOSE. Perfect exit — profit locked on a green candle after the dump cycle.
-- candle=🟢GREEN AND PnL <= 0 → HOLD. Do NOT close at a loss via chart signal. Wait for the bounce.
-- candle=🔴RED                → HOLD regardless of PnL. Never exit on a red candle.
-
-CHART TREND: Use rsi_history, candles, volume_trend, and dump_phase to understand the cycle. HOLD during dump phases. EXIT only on exit_window confluence. CUT only for broken pools (all indicators confirm no bounce for 30+ min).
-
-BIAS TO HOLD: Unless an instruction fires, a pool is dying, volume has collapsed, or yield has vanished, hold.
-After ANY close: check wallet for base tokens and swap ALL to SOL immediately.
 `;
   } else {
     basePrompt += `
