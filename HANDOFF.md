@@ -49,7 +49,7 @@ Run: **2026-09-23 17:37:30–17:40:50 UTC**, yaitu **24 September 00:37:30–00:
 | `82b12c4` | Ganti cron interval screening/management/health dengan elapsed timer, cegah overlap, hormati interval health |
 | `71fe203` | Validasi respons posisi/saldo sebelum screening; tambah runner tiga dry run |
 | `fbbb711` | Samakan gate ketersediaan data deploy dry-run/live dan catat hasil uji |
-| Patch sesi ini | Fail-closed lintas provider, sizing USD $20, ledger loss $20 tahan restart, gate startup state/wallet, biaya model/API, dan poller reduksi risiko |
+| `8469f0e` | Fail-closed lintas provider, sizing USD $20, ledger loss $20 tahan restart, gate startup state/wallet, biaya model/API, dan poller reduksi risiko |
 
 - Spot kini baseline source; bukan strategi optimal yang sudah terbukti. Executor menolak strategi selain spot saat live.
 - Gate screening/executor sekarang menggunakan satu kebijakan risiko fail-closed: mint harus cocok; audit mint/freeze, top-10, bot, creator/dev, bundler, rat-trader, honeypot, rugpull, wash, dan level risiko harus diketahui serta lolos ambang.
