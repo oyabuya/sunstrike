@@ -1,6 +1,6 @@
 import "dotenv/config";
 import fs from "node:fs";
-import cron from "node-cron";
+import { scheduleInterval } from "../interval-task.js";
 import { config } from "../config.js";
 import { logAction } from "../logger.js";
 import { sendMessage } from "../telegram.js";
@@ -11,14 +11,14 @@ if (process.env.DRY_RUN !== "true" || process.env.SUNSTRIKE_LIVE_ENABLED === "tr
 }
 
 const total = 10;
-const interval = Math.max(1, config.schedule.screeningIntervalMin);
+const interval = config.schedule.screeningIntervalMin;
 const statePath = "./logs/ten-dry-run-cycles.json";
 const lockPath = "./logs/ten-dry-run-cycles.lock";
 const lock = fs.openSync(lockPath, "wx", 0o600);
 fs.writeSync(lock, String(process.pid));
 fs.closeSync(lock);
-const schedule = `*/${interval} * * * *`;
-const state = { status: "running", started_at: new Date().toISOString(), completed: 0, total, cron: schedule };
+const schedule = `every ${interval} minutes from process start`;
+const state = { status: "running", started_at: new Date().toISOString(), completed: 0, total, schedule, interval_minutes: interval };
 const save = () => fs.writeFileSync(statePath, JSON.stringify(state, null, 2) + "\n", { mode: 0o600 });
 save();
 
@@ -59,6 +59,6 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
     process.exit(0);
   });
 }
-task = cron.schedule(schedule, cycle);
-await sendMessage(`Sunstrike dry run dimulai: ${total} siklus screening; jadwal cron ${schedule}. Tidak ada transaksi.`);
+task = scheduleInterval(interval, cycle, (error) => console.error(`Dry-run timer failed: ${error.message}`));
+await sendMessage(`Sunstrike dry run dimulai: ${total} siklus screening; jadwal ${schedule}. Tidak ada transaksi.`);
 await cycle();

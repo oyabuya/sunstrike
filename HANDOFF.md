@@ -62,3 +62,10 @@ Terakhir diperbarui: 2026-09-23. Baca `AGENTS.md` dan `RESTART_AUDIT_2026-09-23.
 - Profil sekarang sangat sempit: token umur 12–72 jam, market cap $250k–$10m, TVL $10k–$150k, bin step 80–125, quote SOL. Ini profil token spekulatif muda, bukan pencarian semua LP risiko rendah. Tidak mengubah hard gate untuk memaksa entry.
 - Ditemukan API failure ditelan menjadi kandidat kosong, truncation sebelum enrichment, dan fallback smart-wallet tambahan di orchestration yang tertinggal dari patch sebelumnya. Diperbaiki: error diteruskan, pemilihan top-N setelah enrichment seluruh halaman (maksimal 50), fallback bypass dihapus, laporan kosong memuat hitungan tahap.
 - `scripts/screening-funnel.js` mengukur filter kumulatif read-only; output diagnostik tidak boleh menjadi kandidat transaksi. Runner yang sudah aktif tetap memakai modul lama sampai proses berikutnya; tidak direstart agar batas 10 siklus tidak terulang.
+
+## Audit jadwal 2026-09-24
+
+- Bug terkonfirmasi: cron `*/45` berjalan menit 00/45 (jeda 45/15 menit), bukan setiap 45 menit. Screening/management/health kini memakai timer elapsed-time dengan pencegahan overlap; health mengikuti `healthCheckIntervalMin`. Briefing harian tetap cron UTC.
+- Runner 10 siklus memakai timer sama untuk proses baru. Runner yang sedang aktif tidak direstart atau diulang; sinkronisasi file tidak mengubah timer dalam proses lama.
+- Angka default 45m screening, 15m management, 60m health belum terbukti optimal. Window discovery 5m dengan scan 45m melewatkan banyak aktivitas. Profil umur 12–72h, bin step 80–125 dan batas kapitalisasi/TVL membatasi pencarian token muda. Prioritas evaluasi berikutnya: scan dry-run lebih sering (misalnya 5–10m) dengan anggaran API/LLM tercatat, bandingkan metrik window lebih panjang dan profil pasangan mapan; angka ini hipotesis uji, bukan konfigurasi live yang disetujui.
+- Poller PnL 30 detik bukan jaminan exit 30 detik: berhenti sementara saat screening/management sibuk dan memiliki cooldown pemicu management. Batas kerugian $20 belum otomatis. Jadwal yang benar tidak menyelesaikan risiko ini.

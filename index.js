@@ -1,3 +1,4 @@
+import { scheduleInterval } from "./interval-task.js";
 import "dotenv/config";
 import cron from "node-cron";
 import readline from "readline";
@@ -819,15 +820,15 @@ IMPORTANT:
 export function startCronJobs() {
   stopCronJobs(); // stop any running tasks before (re)starting
 
-  const mgmtTask = cron.schedule(`*/${Math.max(1, config.schedule.managementIntervalMin)} * * * *`, async () => {
+  const mgmtTask = scheduleInterval(config.schedule.managementIntervalMin, async () => {
     if (_managementBusy) return;
     timers.managementLastRun = Date.now();
     await runManagementCycle();
-  });
+  }, (error) => log("cron_error", `Management timer failed: ${error.message}`));
 
-  const screenTask = cron.schedule(`*/${Math.max(1, config.schedule.screeningIntervalMin)} * * * *`, runScreeningCycle);
+  const screenTask = scheduleInterval(config.schedule.screeningIntervalMin, () => runScreeningCycle(), (error) => log("cron_error", `Screening timer failed: ${error.message}`));
 
-  const healthTask = cron.schedule(`0 * * * *`, async () => {
+  const healthTask = scheduleInterval(config.schedule.healthCheckIntervalMin, async () => {
     if (_healthCheckBusy) return;
     _healthCheckBusy = true;
     log("cron", "Starting health check");
