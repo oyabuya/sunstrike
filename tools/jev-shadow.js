@@ -59,7 +59,7 @@ export function buildJevShadowRequest(candidates) {
   return { model: MODEL, state: { pools }, questions };
 }
 
-export async function recordJevShadow(candidates, fetcher = fetch) {
+export async function recordJevShadow(candidates, fetcher = fetch, cycleId = null) {
   if (process.env.DRY_RUN !== "true" || process.env.JEV_SHADOW_ENABLED !== "true" || !process.env.OPENROUTER_API_KEY || !candidates.length) return null;
   const request = buildJevShadowRequest(candidates);
   const controller = new AbortController();
@@ -76,17 +76,19 @@ export async function recordJevShadow(candidates, fetcher = fetch) {
     const scores = request.state.pools.map(({ id, pool_address, candidate_score }) => {
       const read = (dimension) => {
         const answer = data.answers?.[`${id}_${dimension}`];
-        if (answer?.type !== "score" || !Number.isFinite(answer.score) || !Number.isFinite(answer.confidence)) {
+        if (answer?.type !== "score" || !Number.isFinite(answer.score) || answer.score < 0 || answer.score > 2 || !Number.isFinite(answer.confidence) || answer.confidence < 0 || answer.confidence > 1) {
           throw new Error(`Invalid Jev answer for ${id}_${dimension}`);
         }
         return { score: answer.score, confidence: answer.confidence };
       };
       return { pool_address, candidate_score, fees: read("fees"), momentum: read("momentum"), holder_risk: read("holder_risk") };
     });
-    logAction({ tool: "jev_shadow", args: { model: MODEL, pools: request.state.pools }, result: { scores, cost_usd: data.usage?.cost ?? null }, success: true });
+    logAction({ tool: "jev_shadow", args: { cycle_id: cycleId, model: MODEL, pools: request.state.pools }, result: { scores, served_model: data.model ?? null, input_tokens: data.usage?.input_tokens ?? null, cost_usd: data.usage?.cost ?? null }, success: true });
     return scores;
   } catch (error) {
-    log("jev_shadow_warn", `Jev shadow scoring unavailable: ${error.message}`);
+    // Do not log provider text: it may echo the request or credentials.
+    const reason = error.name === "AbortError" ? "timeout" : /^Jev HTTP \d+$/.test(error.message) ? error.message : "invalid_response_or_network_error";
+    logAction({ tool: "jev_shadow", args: { cycle_id: cycleId, model: MODEL, pool_addresses: request.state.pools.map((p) => p.pool_address) }, result: { error: reason }, success: false });
     return null;
   } finally {
     clearTimeout(timer);

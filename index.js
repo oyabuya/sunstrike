@@ -2,7 +2,7 @@ import "dotenv/config";
 import cron from "node-cron";
 import readline from "readline";
 import { agentLoop } from "./agent.js";
-import { log } from "./logger.js";
+import { log, logAction } from "./logger.js";
 import { getMyPositions, closePosition, getActiveBin } from "./tools/dlmm.js";
 import { getWalletBalances } from "./tools/wallet.js";
 import { getTopCandidates, getVolumeTrend } from "./tools/screening.js";
@@ -672,11 +672,13 @@ export async function runScreeningCycle({ silent = false } = {}) {
       Promise.allSettled(passing.map(({ pool }) => getVolumeTrend(pool.pool))),
     ]);
 
-    // Independent dry-run measurement only; Jev scores never affect Luna's prompt or trade execution.
-    await recordJevShadow(passing.map((candidate, i) => ({
+    // Join Jev measurements to Luna's real tool choice, without exposing Jev to the agent.
+    const shadowCycleId = `screen-${Date.now()}`;
+    const shadowScores = await recordJevShadow(passing.map((candidate, i) => ({
       ...candidate,
       volTrend: volumeTrendResults[i]?.status === "fulfilled" ? volumeTrendResults[i].value : null,
-    })));
+    })), fetch, shadowCycleId);
+    const shadowChoices = [];
 
     // Build compact candidate blocks
     const candidateBlocks = passing.map(({ pool, sw, n, ti, mem, source }, i) => {
@@ -815,9 +817,20 @@ IMPORTANT:
 - Keep the whole report compact and highly scannable for Telegram.
       `, config.llm.maxStepsScreener, [], "SCREENER", config.llm.screeningModel, config.llm.maxTokens, {
         onToolStart: async ({ name }) => { await liveMessage?.toolStart(name); },
-        onToolFinish: async ({ name, result, success }) => { await liveMessage?.toolFinish(name, result, success); },
+        onToolFinish: async ({ name, args, result, success }) => {
+          if (name === "deploy_position") shadowChoices.push({ pool_address: args.pool_address ?? null, success, dry_run: result?.dry_run === true, blocked: result?.blocked === true });
+          await liveMessage?.toolFinish(name, result, success);
+        },
       });
     screenReport = content;
+    if (process.env.DRY_RUN === "true" && process.env.JEV_SHADOW_ENABLED === "true") {
+      logAction({ tool: "screening_shadow_outcome", args: { cycle_id: shadowCycleId }, result: {
+        candidate_addresses: passing.map(({ pool }) => pool.pool),
+        scored_addresses: shadowScores?.map((score) => score.pool_address) ?? [],
+        choices: shadowChoices,
+        no_deploy: shadowChoices.length === 0,
+      }, success: true });
+    }
   } catch (error) {
     log("cron_error", `Screening cycle failed: ${error.message}`);
     screenReport = `Screening cycle failed: ${error.message}`;

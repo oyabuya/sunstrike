@@ -36,3 +36,26 @@ test("Jev shadow never calls provider outside explicitly enabled dry run", async
     }
   }
 });
+
+test("Jev validates provider scores and links a valid response to its cycle", async () => {
+  const old = { dry: process.env.DRY_RUN, enabled: process.env.JEV_SHADOW_ENABLED, key: process.env.OPENROUTER_API_KEY };
+  try {
+    process.env.DRY_RUN = "true";
+    process.env.JEV_SHADOW_ENABLED = "true";
+    process.env.OPENROUTER_API_KEY = "test";
+    const answers = Object.fromEntries(["fees", "momentum", "holder_risk"].map((dimension) =>
+      [`p0_${dimension}`, { type: "score", score: 1.25, confidence: 0.8 }]));
+    const fetcher = async (_url, options) => {
+      assert.equal(JSON.parse(options.body).state.pools.length, 1);
+      return { ok: true, json: async () => ({ model: "typesafe/jev-1.13-20260917", answers, usage: { cost: 0.00001 } }) };
+    };
+    assert.equal((await recordJevShadow([candidate], fetcher, "test-cycle"))[0].fees.score, 1.25);
+    answers.p0_fees.score = 3;
+    assert.equal(await recordJevShadow([candidate], fetcher, "test-cycle"), null);
+  } finally {
+    for (const [name, value] of Object.entries({ DRY_RUN: old.dry, JEV_SHADOW_ENABLED: old.enabled, OPENROUTER_API_KEY: old.key })) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+});
