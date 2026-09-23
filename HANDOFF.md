@@ -110,3 +110,7 @@ Arsip April tetap berisi **871 action rows**, 29 deploy sukses, 29 close sukses,
 - Saldo di atas $100 tidak lagi dianggap tambahan deployment budget atau alasan memblokir keuntungan. Batas posisi/eksposur tetap $20; loss dihitung dari nilai tertinggi antara modal kebijakan $100 dan equity awal ledger. Kerugian maksimum $20 tetap latch.
 - Loader `.env` root repo dan derivasi identitas wallet dari perubahan sesi sebelumnya disertakan. Respons saldo Helius malformed ditolak sebagai unknown.
 - Verifikasi lokal: 11/11 suite berhasil; syntax index/config dan diff check berhasil. Deployment dan status service dicatat setelah langkah operasional selesai.
+
+- Dry run ulang setelah fix native SOL Helius: 3/3 siklus `no_entry`, tanpa transaksi atau error saldo. Saldo VPS terakhir 0,880118 SOL (~$101,10), 0 LP; ledger risiko awal $100,61.
+- Jupiter quote baca-saja HTTP 200. GMGN CLI v1.6.6 terpasang dan Ed25519 keypair dibuat di VPS (`~/.config/gmgn/keypair.pem` mode 600); API key pribadi belum tersedia. Public key link sudah diberikan ke pemilik. Pemilik melaporkan “insufficient assets” pada key service; lokasi error diminta untuk diagnosis. Jangan gunakan demo key untuk LIVE.
+- Service `sunstrike.service` sempat aktif dry-run, lalu dihentikan setelah Telegram me-replay `/start` lama. Tidak ada posisi dibuka. Polling kini menolak semua pesan sebelum waktu startup dan pesan lebih dari 120 detik. Restart service setelah deploy patch ini; hanya service Sunstrike yang boleh disentuh.

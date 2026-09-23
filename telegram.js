@@ -18,6 +18,7 @@ const ALLOWED_USER_IDS = new Set(
 let chatId   = process.env.TELEGRAM_CHAT_ID || null;
 let _offset  = 0;
 let _polling = false;
+let _pollingStartedAt = 0;
 let _liveMessageDepth = 0;
 let _warnedMissingChatId = false;
 let _warnedMissingAllowedUsers = false;
@@ -310,7 +311,7 @@ async function poll(onMessage) {
       for (const update of data.result || []) {
         _offset = update.update_id + 1;
         const msg = update.message;
-        if (!msg?.text) continue;
+        if (!msg?.text || !isFreshTelegramUpdate(msg, _pollingStartedAt)) continue;
         if (!isAuthorizedIncomingMessage(msg)) continue;
         await onMessage(msg);
       }
@@ -323,8 +324,13 @@ async function poll(onMessage) {
   }
 }
 
+export function isFreshTelegramUpdate(msg, startedAt, now = Math.floor(Date.now() / 1000)) {
+  return Number.isInteger(msg?.date) && msg.date > startedAt && now - msg.date <= 120;
+}
+
 export function startPolling(onMessage) {
-  if (!TOKEN) return;
+  if (!TOKEN || _polling) return;
+  _pollingStartedAt = Math.floor(Date.now() / 1000);
   _polling = true;
   poll(onMessage); // fire-and-forget
   log("telegram", "Bot polling started");
