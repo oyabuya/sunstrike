@@ -18,8 +18,8 @@ async function main() {
     console.log("\nTop pool:");
     console.log(`  Name: ${best.name}`);
     console.log(`  Pool: ${best.pool}`);
-    console.log(`  Fee/TVL ratio: ${best.fee_tvl_ratio}`);
-    console.log(`  Volume 24h: $${best.volume_24h?.toLocaleString()}`);
+    console.log(`  Fee/active TVL ratio: ${best.fee_active_tvl_ratio}`);
+    console.log(`  Volume in selected window: $${best.volume_window?.toLocaleString()}`);
     console.log(`  Active TVL: $${best.active_tvl?.toLocaleString()}`);
     console.log(`  Organic score: ${best.organic_score}`);
     console.log(`  Volatility: ${best.volatility}`);
@@ -38,14 +38,14 @@ async function main() {
     try {
       const detail = await getPoolDetail({ pool_address: poolAddr });
       console.log("Name:", detail.name);
-      console.log("Pool address:", detail.pool_address);
-      console.log("Fee/TVL ratio:", detail.fee_active_tvl_ratio);
-      console.log("Volume 24h:", detail.volume);
+      console.log("Pool address:", detail.pool);
+      console.log("Fee/active TVL ratio:", detail.fee_active_tvl_ratio);
+      console.log("Volume in selected window:", detail.volume_window);
       console.log("Active TVL:", detail.active_tvl);
       console.log("Volatility:", detail.volatility);
-      console.log("Organic score (base):", detail.token_x?.organic_score);
-      console.log("Holders:", detail.base_token_holders);
-      console.log("Bin step:", detail.dlmm_params?.bin_step);
+      console.log("Organic score (base):", detail.base?.organic);
+      console.log("Holders:", detail.holders);
+      console.log("Bin step:", detail.bin_step);
       console.log("Price trend:", detail.price_trend);
     } catch (err) {
       console.log("Pool detail error:", err.message);
