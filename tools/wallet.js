@@ -77,7 +77,9 @@ export async function getWalletBalances() {
     const balances = data.balances;
 
     // ─── Find SOL and USDC ────────────────────────────────────
-    const solEntry = balances.find(b => b.mint === config.tokens.SOL);
+    // Helius uses the native SOL sentinel ending in 111, not the wrapped SOL mint.
+    const solEntry = balances.find(b => b.mint === "So11111111111111111111111111111111111111111")
+      || balances.find(b => b.mint === config.tokens.SOL);
     const usdcEntry = balances.find(b => b.mint === config.tokens.USDC);
 
     const solBalance = solEntry?.balance || 0;
