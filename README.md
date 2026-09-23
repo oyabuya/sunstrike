@@ -407,7 +407,8 @@ Add known rug/farm deployer wallet addresses to `deployer-blacklist.json`:
 
 1. Create a bot via [@BotFather](https://t.me/BotFather) and copy the token
 2. Add `TELEGRAM_BOT_TOKEN=<token>` to your `.env`
-3. Start the agent, then send any message to your bot — it auto-registers your chat ID
+3. Send `/start` to the bot in a private Telegram chat, then run `node scripts/telegram-check.js` on the VPS. Copy its `chat_id` and `user_id` into `TELEGRAM_CHAT_ID` and `TELEGRAM_ALLOWED_USER_IDS` in `.env`.
+4. Run `node scripts/telegram-check.js --send-test` to verify delivery. The check prints IDs and bot username, never the token. Keep `DRY_RUN=true` and `SUNSTRIKE_LIVE_ENABLED=false`.
 
 ### Notifications
 

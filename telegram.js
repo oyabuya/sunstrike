@@ -27,7 +27,7 @@ function loadChatId() {
   try {
     if (fs.existsSync(USER_CONFIG_PATH)) {
       const cfg = JSON.parse(fs.readFileSync(USER_CONFIG_PATH, "utf8"));
-      if (cfg.telegramChatId) chatId = cfg.telegramChatId;
+      if (!chatId && cfg.telegramChatId) chatId = cfg.telegramChatId;
     }
   } catch { /**/ }
 }
