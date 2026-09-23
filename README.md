@@ -645,7 +645,7 @@ The authors are not responsible for any losses incurred through use of this soft
 ### Telegram runtime mode
 
 Authorized Telegram users can send `/mode`, `/dry_run`, or `/live` directly.
-`/live` requires `SUNSTRIKE_LIVE_ENABLED=true`, valid provider credentials, a
+`/live` requires `SUNSTRIKE_LIVE_ENABLED=true`, Helius/Jupiter credentials, a
 wallet-bound portfolio ledger, a fresh wallet/LP snapshot, sufficient SOL, and
 an untripped loss breaker. Initialize the ledger once using
 `DRY_RUN=true node scripts/init-portfolio-risk.js`; never delete it to reset losses.
@@ -654,3 +654,7 @@ Mode changes last for the current process. Restart follows `.env` (keep
 `DRY_RUN=true` for a safe restart). `/dry_run` does not close existing positions
 and suspends real management transactions. The VPS service template is
 `deploy/sunstrike.service`.
+
+GMGN and OKX are optional risk enrichment, as in the April flow. A current
+matching-mint Jupiter audit is mandatory; any adverse GMGN/OKX signal received
+still blocks deployment. The portfolio loss breaker remains mandatory.

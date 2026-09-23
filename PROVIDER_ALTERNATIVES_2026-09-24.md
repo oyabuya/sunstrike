@@ -27,6 +27,8 @@ Probe berikutnya memakai mint contoh dari dokumentasi Cabal-Hunter: `/api/scan-c
 
 ## Implikasi untuk Sunstrike
 
+**Pembaruan kebijakan:** setelah audit alur April, GMGN/OKX kembali menjadi enrichment opsional. Pernyataan di bawah ini menjelaskan gate ketat sebelum revisi; gate aktif kini mewajibkan audit Jupiter yang cocok dengan mint dan menolak sinyal buruk dari provider tambahan bila tersedia. Batas rugi portofolio tetap wajib.
+
 `token-risk-policy.js` menolak metrik rat-trader, OKX rugpull/wash, dan level risiko bila tidak diketahui. Solana Tracker memberi insider concentration, bukan bukti perilaku rat-trader/insider extraction yang sama; tidak ada field wash trading langsung yang terverifikasi dalam dokumentasi token response. Maka adapter alternatif harus menyimpan sumber dan semantik setiap metrik secara eksplisit, tidak mengisi nilai hilang dengan nol, dan tetap memblokir entry sampai seluruh gate lama memiliki padanan terverifikasi atau pemilik menyetujui revisi kebijakan risiko berdasarkan bukti. Belum ada API key Solana Tracker/Birdeye/OKX di VPS; belum ada transaksi atau perubahan mode.
 
 ## Langkah berikutnya

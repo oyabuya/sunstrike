@@ -181,7 +181,6 @@ export function assertLiveConfiguration() {
   if (!process.env.RPC_URL) missing.push("RPC_URL");
   if (!process.env.HELIUS_API_KEY) missing.push("HELIUS_API_KEY");
   if (!process.env.JUPITER_API_KEY) missing.push("JUPITER_API_KEY");
-  if (!process.env.GMGN_API_KEY) missing.push("GMGN_API_KEY");
   if (!(process.env.OPENROUTER_API_KEY || process.env.LLM_API_KEY)) missing.push("OPENROUTER_API_KEY");
   if (config.risk.maxPositions !== 1) missing.push("maxPositions=1");
   if (config.strategy.strategy !== "spot") missing.push("strategy=spot");

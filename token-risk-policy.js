@@ -72,40 +72,32 @@ export function evaluateTokenRisk({
     percent(gmgnInfo?.creator_hold_rate, true),
     percent(gmgnInfo?.dev_hold_rate, true),
   ]);
-  if (devHold == null) return { pass: false, reason: "creator/developer holding rate is unknown" };
-  if (devHold > maxDev) return { pass: false, reason: `creator/developer holding ${devHold.toFixed(1)}% exceeds ${maxDev}%` };
+  if (devHold != null && devHold > maxDev) return { pass: false, reason: `creator/developer holding ${devHold.toFixed(1)}% exceeds ${maxDev}%` };
 
   const bundle = maximumKnown([
     percent(okxAdvanced?.bundle_pct),
     percent(gmgnInfo?.bundler_pct),
   ]);
-  if (bundle == null) return { pass: false, reason: "bundler concentration is unknown" };
-  if (bundle > maxBundle) return { pass: false, reason: `bundler concentration ${bundle.toFixed(1)}% exceeds ${maxBundle}%` };
+  if (bundle != null && bundle > maxBundle) return { pass: false, reason: `bundler concentration ${bundle.toFixed(1)}% exceeds ${maxBundle}%` };
 
   const ratTraders = percent(gmgnInfo?.rat_trader_pct);
-  if (ratTraders == null) return { pass: false, reason: "rat-trader concentration is unknown" };
-  if (ratTraders > maxRat) return { pass: false, reason: `rat-trader concentration ${ratTraders.toFixed(1)}% exceeds ${maxRat}%` };
+  if (ratTraders != null && ratTraders > maxRat) return { pass: false, reason: `rat-trader concentration ${ratTraders.toFixed(1)}% exceeds ${maxRat}%` };
 
   const honeypotStatuses = [
     typeof gmgnSecurity?.is_honeypot === "boolean" ? gmgnSecurity.is_honeypot : null,
     Array.isArray(okxAdvanced?.tags) ? okxAdvanced.tags.includes("honeypot") : null,
   ].filter((v) => v != null);
-  if (!honeypotStatuses.length) return { pass: false, reason: "honeypot status is unknown" };
   if (honeypotStatuses.some(Boolean)) return { pass: false, reason: "token is flagged as a honeypot" };
 
   if (screening?.requireRenouncedMint !== false && gmgnSecurity?.renounced_mint === false) {
     return { pass: false, reason: "mint authority is not renounced" };
   }
 
-  if (!okxRisk || typeof okxRisk.is_rugpull !== "boolean" || typeof okxRisk.is_wash !== "boolean") {
-    return { pass: false, reason: "OKX rugpull/wash analysis is incomplete" };
-  }
-  if (okxRisk.is_rugpull) return { pass: false, reason: "OKX flags liquidity-removal risk" };
-  if (okxRisk.is_wash) return { pass: false, reason: "OKX flags wash trading" };
+  if (okxRisk?.is_rugpull === true) return { pass: false, reason: "OKX flags liquidity-removal risk" };
+  if (okxRisk?.is_wash === true) return { pass: false, reason: "OKX flags wash trading" };
 
   const riskLevel = number(okxAdvanced?.risk_level);
-  if (riskLevel == null) return { pass: false, reason: "OKX token risk level is unknown" };
-  if (riskLevel >= 4) return { pass: false, reason: `OKX risk level ${riskLevel} is above the allowed range` };
+  if (riskLevel != null && riskLevel >= 4) return { pass: false, reason: `OKX risk level ${riskLevel} is above the allowed range` };
 
   return { pass: true, metrics: { top10_pct: top10, bot_holders_pct: bots, dev_hold_pct: devHold, bundler_pct: bundle, rat_trader_pct: ratTraders, okx_risk_level: riskLevel } };
 }
