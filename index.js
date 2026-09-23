@@ -21,7 +21,7 @@ import { computeEvilPandaDeployPlan, formatEvilPandaDeployPlan, getEvilPandaThre
 
 log("startup", "DLMM LP Agent starting...");
 log("startup", `Mode: ${process.env.DRY_RUN === "true" ? "DRY RUN" : "LIVE"}`);
-log("startup", `Model: ${process.env.LLM_MODEL || "hermes-3-405b"}`);
+log("startup", `Models: management=${config.llm.managementModel}, screening=${config.llm.screeningModel}, general=${config.llm.generalModel}`);
 
 const TP_PCT = config.management.takeProfitFeePct;
 const DEPLOY = config.management.deployAmountSol;

@@ -123,13 +123,19 @@ WALLET_PRIVATE_KEY=your_base58_private_key
 RPC_URL=https://mainnet.helius-rpc.com/?api-key=YOUR_KEY
 OPENROUTER_API_KEY=sk-or-...
 HELIUS_API_KEY=your_helius_key          # for wallet balance lookups
+JUPITER_API_KEY=your_jupiter_key         # required for live post-close swaps
 TELEGRAM_BOT_TOKEN=123456:ABC...        # optional — for notifications + chat
 TELEGRAM_CHAT_ID=                       # set the exact approved chat ID
 TELEGRAM_ALLOWED_USER_IDS=              # approved controller user IDs
 DRY_RUN=true
+SUNSTRIKE_LIVE_ENABLED=false
 ```
 
 > Never put your private key or API keys in `user-config.json` — use `.env` only. Both files are gitignored.
+
+For the September 2026 restart, use a new dedicated wallet. Put its private key only in the VPS `.env`, restrict that file to the service account (`chmod 600 .env`), and never send the key in chat. `OPENROUTER_API_KEY` is for model analysis and tool decisions; it cannot by itself trade. The `RPC_URL` and `HELIUS_API_KEY` support wallet/chain reads, while `JUPITER_API_KEY` supports post-close swaps. Telegram credentials are needed for bot reports and control. `LPAGENT_API_KEY` and `GMGN_API_KEY` are optional enrichment; GMGN additionally needs `gmgn-cli`. Check the provider model slug and tool-call behavior before relying on the agent. The current default is `openai/gpt-4.1-mini`.
+
+The owner set a **$100 starting capital** and **$20 maximum total test loss**. These are policy limits, not yet an enforced wallet-level circuit breaker. Keep both live flags off until portfolio valuation, cumulative loss checks, and stop alerts are implemented and tested. The historical per-position stop loss does not enforce the $20 cap.
 
 Copy config and edit as needed:
 

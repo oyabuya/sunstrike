@@ -1,3 +1,8 @@
 {
-  "dryRun": true
+  "dryRun": true,
+  "maxPositions": 1,
+  "autoCompoundEnabled": false,
+  "managementModel": "openai/gpt-4.1-mini",
+  "screeningModel": "openai/gpt-4.1-mini",
+  "generalModel": "openai/gpt-4.1-mini"
 }
