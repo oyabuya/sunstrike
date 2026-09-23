@@ -4,6 +4,8 @@ import { isDevBlocked, getBlockedDevs } from "../dev-blocklist.js";
 import { log } from "../logger.js";
 import { isBaseMintOnCooldown, isPoolOnCooldown } from "../pool-memory.js";
 import { scoreEvilPandaCandidate, getEvilPandaThresholds } from "../evilpanda-policy.js";
+import { evaluateTokenRisk } from "../token-risk-policy.js";
+import { getTokenInfo } from "./token.js";
 
 const FETCH_TIMEOUT_MS = 15_000;
 
@@ -367,11 +369,13 @@ export async function getTopCandidates({ limit = 10 } = {}) {
       if (r.status !== "fulfilled") continue;
       const { sec, info } = r.value;
       if (sec) {
+        eligible[i].gmgn_security = sec;
         if (sec.top_10_holder_rate != null) eligible[i].gmgn_top10     = sec.top_10_holder_rate;
         if (sec.renounced_mint     != null) eligible[i].renounced_mint  = sec.renounced_mint;
         if (sec.is_honeypot        != null) eligible[i].gmgn_honeypot   = sec.is_honeypot;
       }
       if (info) {
+        eligible[i].gmgn_info = info;
         if (info.creator_hold_rate != null) eligible[i].creator_hold_rate = info.creator_hold_rate;
         if (info.dev_hold_rate     != null) eligible[i].dev_hold_rate      = info.dev_hold_rate;
         if (info.bundler_pct       != null) eligible[i].gmgn_bundler_pct   = info.bundler_pct;
@@ -396,7 +400,7 @@ export async function getTopCandidates({ limit = 10 } = {}) {
     const maxDevHold = maxDevHoldPct;
     eligible.splice(0, eligible.length, ...eligible.filter((p) => {
       const hold = p.creator_hold_rate ?? p.dev_hold_rate;
-      if (hold != null && hold > maxDevHold) {
+      if (hold != null && hold * 100 > maxDevHold) {
         log("screening", `Dev hold filter: dropped ${p.name} — creator/dev holds ${(hold * 100).toFixed(1)}%`);
         pushFilteredReason(filteredOut, p, `dev/creator holds ${(hold * 100).toFixed(1)}% > ${maxDevHold}% limit`);
         return false;
@@ -496,12 +500,13 @@ export async function getTopCandidates({ limit = 10 } = {}) {
     const { getAdvancedInfo, getPriceInfo, getClusterList, getRiskFlags } = await import("./okx.js");
     const okxResults = await Promise.allSettled(
       eligible.map(async (p) => {
-        if (!p.base?.mint) return { adv: null, price: null, clusters: [], risk: null };
-        const [adv, price, clusters, risk] = await Promise.allSettled([
+        if (!p.base?.mint) return { adv: null, price: null, clusters: [], risk: null, token: null };
+        const [adv, price, clusters, risk, token] = await Promise.allSettled([
           getAdvancedInfo(p.base.mint),
           getPriceInfo(p.base.mint),
           getClusterList(p.base.mint),
           getRiskFlags(p.base.mint),
+          getTokenInfo({ query: p.base.mint }),
         ]);
 
         const mintShort = p.base.mint.slice(0, 8);
@@ -515,6 +520,7 @@ export async function getTopCandidates({ limit = 10 } = {}) {
           price: price.status === "fulfilled" ? price.value : null,
           clusters: clusters.status === "fulfilled" ? clusters.value : [],
           risk: risk.status === "fulfilled" ? risk.value : null,
+          token: token.status === "fulfilled" ? token.value : null,
         };
       })
     );
@@ -522,9 +528,14 @@ export async function getTopCandidates({ limit = 10 } = {}) {
       const r = okxResults[i];
       if (r.status !== "fulfilled") continue;
       const { adv, price, clusters, risk } = r.value;
+      eligible[i].okx_advanced = adv;
+      eligible[i].okx_risk = risk;
+      const tokenInfo = r.value.token?.results?.find((token) => token.mint === eligible[i].base?.mint) || null;
+      eligible[i].token_info = tokenInfo;
       if (adv) {
         eligible[i].risk_level      = adv.risk_level;
         eligible[i].bundle_pct      = adv.bundle_pct;
+        eligible[i].dev_holding_pct = adv.dev_holding_pct;
         eligible[i].sniper_pct      = adv.sniper_pct;
         eligible[i].suspicious_pct  = adv.suspicious_pct;
         eligible[i].smart_money_buy = adv.smart_money_buy;
@@ -548,6 +559,27 @@ export async function getTopCandidates({ limit = 10 } = {}) {
         eligible[i].top_cluster_trend    = clusters[0]?.trend ?? null;      // buy|sell|neutral
         eligible[i].top_cluster_hold_pct = clusters[0]?.holding_pct ?? null;
       }
+    }
+    if (s.antiRugStrict) {
+      eligible.splice(0, eligible.length, ...eligible.filter((pool) => {
+        const result = evaluateTokenRisk({
+          expectedMint: pool.base?.mint,
+          poolMint: pool.base?.mint,
+          tokenInfo: pool.token_info,
+          okxAdvanced: pool.okx_advanced,
+          okxRisk: pool.okx_risk,
+          gmgnSecurity: pool.gmgn_security,
+          gmgnInfo: pool.gmgn_info,
+          screening: s,
+        });
+        if (!result.pass) {
+          log("screening", `Risk gate: dropped ${pool.name} — ${result.reason}`);
+          pushFilteredReason(filteredOut, pool, result.reason);
+          return false;
+        }
+        pool.risk_metrics = result.metrics;
+        return true;
+      }));
     }
     // Wash trading hard filter — fake volume = misleading fee yield
     // Flagged mints are cached for 6h so future cycles skip OKX enrichment entirely.

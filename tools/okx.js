@@ -124,8 +124,12 @@ export async function getRiskFlags(tokenAddress, chainId = CHAIN_SOLANA) {
     ...collectRiskEntries(data?.extraAnalysis),
   ];
 
-  const hasRisk = (riskKey) =>
-    entries.some((entry) => entry?.riskKey === riskKey && isAffirmative(entry?.newRiskLabel));
+  const hasRisk = (riskKey) => {
+    const entry = entries.find((candidate) => candidate?.riskKey === riskKey &&
+      typeof candidate?.newRiskLabel === "string" && /^(yes|no)$/i.test(candidate.newRiskLabel.trim()));
+    if (!entry) return null;
+    return isAffirmative(entry.newRiskLabel);
+  };
 
   return {
     is_rugpull: hasRisk("isLiquidityRemoval"),

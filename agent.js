@@ -3,6 +3,7 @@ import { jsonrepair } from "jsonrepair";
 import { buildSystemPrompt } from "./prompt.js";
 import { executeTool } from "./tools/executor.js";
 import { tools } from "./tools/definitions.js";
+import { recordExternalModelCost, markExternalCostAccountingIncomplete } from "./portfolio-risk.js";
 
 const MANAGER_TOOLS = new Set(["deploy_position", "close_position", "claim_fees", "swap_token", "get_position_pnl", "get_my_positions", "get_wallet_balance"]);
 const SCREENER_TOOLS = new Set(["get_active_bin", "get_top_candidates", "check_smart_wallets_on_pool", "get_smart_wallet_pools", "get_token_holders", "get_token_narrative", "get_token_info", "search_pools", "get_pool_memory", "deploy_position", "get_trending_tokens", "get_rugcheck_report", "get_dexscreener_pairs"]);
@@ -177,6 +178,7 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
       const FALLBACK_MODEL = "openai/gpt-4.1-mini";
       let response;
       let usedModel = activeModel;
+      const openRouterMetered = !process.env.LLM_BASE_URL || /openrouter\.ai\/api\/v1/i.test(process.env.LLM_BASE_URL);
       // Dashscope/Qwen does not support tool_choice="required" — always use "auto"
       const isDashscope = /qwen/i.test(usedModel) || /dashscope/i.test(process.env.LLM_BASE_URL || "");
       // Force a tool call on step 0 for action intents — prevents the model from inventing deploy/close outcomes
@@ -193,6 +195,7 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
             // GPT-6 Luna's OpenRouter catalog does not list temperature support.
             ...(!/^openai\/gpt-6-luna(?:$|:)/.test(usedModel) ? { temperature: config.llm.temperature } : {}),
             max_tokens: maxOutputTokens ?? config.llm.maxTokens,
+            ...(openRouterMetered ? { usage: { include: true } } : {}),
           });
         } catch (error) {
           if (providerMode === "system" && isSystemRoleError(error)) {
@@ -227,8 +230,34 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
       }
 
       if (!response.choices?.length) {
+        if (process.env.DRY_RUN !== "true") {
+          try {
+            const cost = Number(response.usage?.cost);
+            if (openRouterMetered && Number.isFinite(cost) && cost >= 0) {
+              recordExternalModelCost(cost, usedModel, { otherApiCostsUsdPerMonth: config.risk.otherApiCostsUsdPerMonth });
+            } else {
+              markExternalCostAccountingIncomplete(usedModel, { otherApiCostsUsdPerMonth: config.risk.otherApiCostsUsdPerMonth });
+            }
+          } catch {
+            process.env.SUNSTRIKE_EXTERNAL_COST_ACCOUNTING_BROKEN = "true";
+            throw new Error("OpenRouter cost accounting could not be persisted; live actions are blocked");
+          }
+        }
         log("error", `Bad API response: ${JSON.stringify(response).slice(0, 200)}`);
         throw new Error(`API returned no choices: ${response.error?.message || JSON.stringify(response)}`);
+      }
+      if (process.env.DRY_RUN !== "true") {
+        try {
+          const cost = Number(response.usage?.cost);
+          if (openRouterMetered && Number.isFinite(cost) && cost >= 0) {
+            recordExternalModelCost(cost, usedModel, { otherApiCostsUsdPerMonth: config.risk.otherApiCostsUsdPerMonth });
+          } else {
+            markExternalCostAccountingIncomplete(usedModel, { otherApiCostsUsdPerMonth: config.risk.otherApiCostsUsdPerMonth });
+          }
+        } catch {
+          process.env.SUNSTRIKE_EXTERNAL_COST_ACCOUNTING_BROKEN = "true";
+          throw new Error("OpenRouter cost accounting could not be persisted; live actions are blocked");
+        }
       }
       if (usedModel !== activeModel) {
         log("agent", `Fallback model responded: ${usedModel} (original: ${activeModel})`);

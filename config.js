@@ -30,8 +30,17 @@ if (process.env.DRY_RUN === "false") {
 export const config = {
   // ─── Risk Limits ─────────────────────────
   risk: {
-    maxPositions:    u.maxPositions    ?? 3,
+    maxPositions:    u.maxPositions    ?? 1,
     maxDeployAmount: u.maxDeployAmount ?? 50,
+    // Owner policy for the restart canary. These limits are never agent-tunable.
+    capitalBudgetUsd: 100,
+    maxCumulativeLossUsd: 20,
+    maxPositionUsd: 20,
+    maxConcurrentExposureUsd: 20,
+    minimumLiquidReserveUsd: 15,
+    otherApiCostsUsdPerMonth: process.env.SUNSTRIKE_OTHER_API_COSTS_USD_PER_MONTH?.trim()
+      ? Number(process.env.SUNSTRIKE_OTHER_API_COSTS_USD_PER_MONTH)
+      : Number.NaN,
   },
 
   // ─── Pool Screening Thresholds ───────────
@@ -92,7 +101,7 @@ export const config = {
     // Auto compounding controls.
     // mode=dynamic -> use percentage-based sizing (existing behavior)
     // mode=step    -> increase deploy amount in fixed steps as wallet grows
-    autoCompoundEnabled:   u.autoCompoundEnabled   ?? true,
+    autoCompoundEnabled:   u.autoCompoundEnabled   ?? false,
     autoCompoundMode:      u.autoCompoundMode      ?? "dynamic", // "dynamic" | "step"
     autoCompoundStartBalanceSol: u.autoCompoundStartBalanceSol ?? null,
     autoCompoundBalanceStepSol:  u.autoCompoundBalanceStepSol  ?? 0.02,
@@ -114,7 +123,7 @@ export const config = {
 
 // ─── Strategy Mapping ───────────────────
  strategy: {
-  strategy: u.strategy ?? "bid_ask",
+  strategy: u.strategy ?? "spot",
   binsBelow: u.binsBelow ?? 80, // evolved: was 69 — wider range (+33%) untuk dump buffer
   binsAbove: u.binsAbove ?? 15, // evolved: was 10 — minimal upside buffer — prevents instant OOR on small pumps
  },
@@ -162,6 +171,40 @@ export const config = {
   },
 };
 
+if (process.env.DRY_RUN === "false") {
+  const missing = [];
+  if (!process.env.SUNSTRIKE_LIVE_WALLET) missing.push("SUNSTRIKE_LIVE_WALLET");
+  if (!process.env.WALLET_PRIVATE_KEY) missing.push("WALLET_PRIVATE_KEY");
+  if (!process.env.RPC_URL) missing.push("RPC_URL");
+  if (!process.env.HELIUS_API_KEY) missing.push("HELIUS_API_KEY");
+  if (!process.env.JUPITER_API_KEY) missing.push("JUPITER_API_KEY");
+  if (!process.env.GMGN_API_KEY) missing.push("GMGN_API_KEY");
+  if (!(process.env.OPENROUTER_API_KEY || process.env.LLM_API_KEY)) missing.push("OPENROUTER_API_KEY");
+  if (process.env.LLM_BASE_URL && !/openrouter\.ai\/api\/v1/i.test(process.env.LLM_BASE_URL)) missing.push("OpenRouter usage metering");
+  if (!Number.isFinite(config.risk.otherApiCostsUsdPerMonth) || config.risk.otherApiCostsUsdPerMonth < 0) {
+    missing.push("SUNSTRIKE_OTHER_API_COSTS_USD_PER_MONTH");
+  }
+  if (config.risk.maxPositions !== 1) missing.push("maxPositions=1");
+  if (config.strategy.strategy !== "spot") missing.push("strategy=spot");
+  if (config.screening.antiRugStrict !== true) missing.push("antiRugStrict=true");
+  const riskStatePath = path.resolve(process.env.SUNSTRIKE_PORTFOLIO_STATE_PATH || "./portfolio-risk.json");
+  try {
+    const riskState = JSON.parse(fs.readFileSync(riskStatePath, "utf8"));
+    if (riskState?.version !== 1 || riskState.wallet !== process.env.SUNSTRIKE_LIVE_WALLET ||
+        riskState.baseline_usd !== config.risk.capitalBudgetUsd || typeof riskState.tripped !== "boolean" ||
+        typeof riskState.external_cost_accounting_complete !== "boolean" ||
+        !Number.isFinite(riskState.external_costs_usd) || riskState.external_costs_usd < 0 ||
+        !Number.isFinite(Date.parse(riskState.created_at || "")) ||
+        riskState.initial_snapshot?.wallet !== process.env.SUNSTRIKE_LIVE_WALLET ||
+        !Number.isFinite(riskState.initial_snapshot?.equity_usd) || riskState.initial_snapshot?.positions !== 0) {
+      missing.push("wallet-bound portfolio risk state");
+    }
+  } catch {
+    missing.push("initialized portfolio risk state");
+  }
+  if (missing.length) throw new Error(`Live startup blocked by readiness gates: ${missing.join(", ")}`);
+}
+
 /**
  * Compute the optimal deploy amount for a given wallet balance.
  * Scales position size with wallet growth (compounding).
@@ -174,7 +217,15 @@ export const config = {
  *   3.0 SOL wallet → 0.98 SOL deploy
  *   4.0 SOL wallet → 1.33 SOL deploy
  */
-export function computeDeployAmount(walletSol) {
+export function computeDeployAmount(walletSol, solPrice = null) {
+  if (Number.isFinite(solPrice) && solPrice > 0) {
+    const reserve = (config.management.gasReserve ?? 0.2)
+      + (config.management.binArrayRentBuffer ?? 0.15);
+    const deployableSol = Math.max(0, walletSol - reserve);
+    const budgetSol = config.risk.maxPositionUsd / solPrice;
+    return Math.floor(Math.min(deployableSol, budgetSol) * 1000) / 1000;
+  }
+  if (!Number.isFinite(walletSol) || walletSol <= 0) return 0;
   const reserve  = (config.management.gasReserve ?? 0.2)
                  + (config.management.binArrayRentBuffer ?? 0.15);
   const pct      = config.management.positionSizePct ?? 0.35;

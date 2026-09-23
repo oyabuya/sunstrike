@@ -22,7 +22,8 @@ import { addSmartWallet, removeSmartWallet, listSmartWallets, checkSmartWalletsO
 import { getTokenInfo, getTokenHolders, getTokenNarrative } from "./token.js";
 import { getTrendingTokens, getDexScreenerPairs, getRugCheckReport } from "./dexscreener-rugcheck.js";
 import { config, reloadScreeningThresholds } from "../config.js";
-import { getEvilPandaThresholds } from "../evilpanda-policy.js";
+import { evaluateTokenRisk } from "../token-risk-policy.js";
+import { checkPortfolioRisk, validateNewPosition } from "../portfolio-risk.js";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -337,11 +338,20 @@ const PROTECTED_TOOLS = new Set([
   ...WRITE_TOOLS,
   "self_update",
 ]);
+let writeQueue = Promise.resolve();
 
 /**
  * Execute a tool call with safety checks and logging.
  */
 export async function executeTool(name, args) {
+  name = String(name).replace(/<.*$/, "").trim();
+  if (!PROTECTED_TOOLS.has(name)) return executeToolNow(name, args);
+  const result = writeQueue.then(() => executeToolNow(name, args));
+  writeQueue = result.catch(() => {});
+  return result;
+}
+
+async function executeToolNow(name, args) {
   const startTime = Date.now();
 
   // Strip model artifacts like "<|channel|>commentary" appended to tool names
@@ -478,7 +488,10 @@ async function runSafetyChecks(name, args) {
       }
 
       // Check position count limit + duplicate pool guard — force fresh scan to avoid stale cache
-      const positions = await getMyPositions({ force: true });
+      const [positions, balance] = await Promise.all([
+        getMyPositions({ force: true }),
+        getWalletBalances(),
+      ]);
       if ((positions?.error || !Array.isArray(positions?.positions) || !Number.isInteger(positions?.total_positions))) {
         return { pass: false, reason: "Deploy blocked: open positions could not be verified." };
       }
@@ -498,129 +511,65 @@ async function runSafetyChecks(name, args) {
         };
       }
 
-      // Block same base token across different pools
-      if (args.base_mint) {
-        const alreadyHasMint = positions.positions.some(
-          (p) => p.base_mint === args.base_mint
-        );
-        if (alreadyHasMint) {
-          return {
-            pass: false,
-            reason: `Already holding base token ${args.base_mint} in another pool. One position per token only.`,
-          };
-        }
-      }
-
       let poolData = null;
-      // Hard gate: only deploy into SOL-quoted pools — wallet holds SOL, not stablecoins.
-      // Pool data is already fetched below for the 0-position check; piggyback on that call.
-      // We check quote_mint from pool detail here to prevent non-SOL deploys (e.g. unc-USDC).
       try {
         poolData = await getPoolDetail({ pool_address: args.pool_address });
-        const quoteMint = poolData?.quote?.mint;
-        const solMint   = config.tokens.SOL;
-        if (quoteMint && quoteMint !== solMint) {
-          // Check if wallet holds the quote token
-          const balance = await getWalletBalances();
-          const hasQuote = balance.tokens?.some(t => t.mint === quoteMint && t.amount > 0);
-          if (!hasQuote) {
-            return {
-              pass: false,
-              reason: `Deploy blocked: pool quote token is not SOL (mint: ${quoteMint.slice(0, 8)}…) and wallet holds 0 of that token. Only SOL-quoted pools are supported with a SOL-only wallet.`,
-            };
-          }
-        }
-      } catch {
-        // non-blocking — skip check if pool detail unavailable
+      } catch (error) {
+        return { pass: false, reason: `Deploy blocked: current pool metadata could not be verified (${error.message}).` };
       }
       if ((!poolData?.quote?.mint || !poolData?.base?.mint)) {
         return { pass: false, reason: "Deploy blocked: current pool and token mints could not be verified." };
       }
-
-      // Final anti-rug preflight gate (strict mode), applies to ALL deploy paths.
-      if (config.screening.antiRugStrict) {
-        const baseMint = args.base_mint || poolData?.base?.mint;
-        if (baseMint) {
-          let gmgnSec = null;
-          let gmgnInfo = null;
-          let okxRisk = null;
-          let tokenInfo = null;
-          try {
-            const { getRiskFlags } = await import("./okx.js");
-            const tasks = [getRiskFlags(baseMint)];
-            if (process.env.GMGN_API_KEY) {
-              const { getGmgnSecurity, getGmgnInfo } = await import("./gmgn.js");
-              tasks.push(getGmgnSecurity(baseMint), getGmgnInfo(baseMint));
-            }
-            tasks.push(getTokenInfo({ query: baseMint }));
-            const results = await Promise.allSettled(tasks);
-            okxRisk = results[0].status === "fulfilled" ? results[0].value : null;
-            if (process.env.GMGN_API_KEY) {
-              gmgnSec = results[1].status === "fulfilled" ? results[1].value : null;
-              gmgnInfo = results[2].status === "fulfilled" ? results[2].value : null;
-              tokenInfo = results[3].status === "fulfilled" ? results[3].value?.results?.[0] : null;
-            } else {
-              tokenInfo = results[1].status === "fulfilled" ? results[1].value?.results?.[0] : null;
-            }
-          } catch {
-            // non-blocking — provider unavailable, rely on existing checks
-          }
-
-          if ((!okxRisk || !tokenInfo || (process.env.GMGN_API_KEY && !gmgnSec))) {
-            return { pass: false, reason: "Deploy blocked: required token-risk data is unavailable." };
-          }
-
-          if (okxRisk?.is_rugpull === true) {
-            return { pass: false, reason: "Deploy blocked: token is flagged as rugpull by risk provider." };
-          }
-
-          if (config.screening.requireRenouncedMint && gmgnSec?.renounced_mint === false) {
-            return { pass: false, reason: "Deploy blocked: renounced_mint=false." };
-          }
-
-          const { maxTop10Pct, maxRatTraderPct, maxDevHoldPct } = getEvilPandaThresholds(config.screening);
-          const maxTop10 = maxTop10Pct;
-          const top10Pct = gmgnSec?.top_10_holder_rate != null
-            ? gmgnSec.top_10_holder_rate * 100
-            : tokenInfo?.audit?.top_holders_pct;
-          if (top10Pct != null && top10Pct > maxTop10) {
-            return { pass: false, reason: `Deploy blocked: top10 concentration ${Number(top10Pct).toFixed(1)}% > ${maxTop10}% limit.` };
-          }
-
-          const maxRat = maxRatTraderPct;
-          if (gmgnInfo?.rat_trader_pct != null && gmgnInfo.rat_trader_pct > maxRat) {
-            return { pass: false, reason: `Deploy blocked: rat_trader_pct ${gmgnInfo.rat_trader_pct}% > ${maxRat}% limit.` };
-          }
-
-          const maxDevHold = maxDevHoldPct;
-          const devHold = gmgnInfo?.creator_hold_rate ?? gmgnInfo?.dev_hold_rate;
-          if (devHold != null && devHold > maxDevHold) {
-            return { pass: false, reason: `Deploy blocked: dev/creator hold ${(devHold * 100).toFixed(1)}% > ${maxDevHold}% limit.` };
-          }
-
-          const maxBots = Math.max(config.screening.maxBotHoldersPct ?? 30, 30);
-          const botPct = tokenInfo?.audit?.bot_holders_pct;
-          if (botPct != null && maxBots != null && botPct > maxBots) {
-            return { pass: false, reason: `Deploy blocked: bot holders ${botPct}% > ${maxBots}% limit.` };
-          }
-
-          const launchpad = tokenInfo?.launchpad ?? null;
-          if (launchpad && config.screening.allowedLaunchpads?.length > 0 && !config.screening.allowedLaunchpads.includes(launchpad)) {
-            return { pass: false, reason: `Deploy blocked: launchpad ${launchpad} not in allow-list.` };
-          }
-          if (launchpad && config.screening.blockedLaunchpads.includes(launchpad)) {
-            return { pass: false, reason: `Deploy blocked: launchpad ${launchpad} is blocklisted.` };
-          }
-        }
+      const poolMint = poolData.base.mint;
+      if (args.base_mint && args.base_mint !== poolMint) {
+        return { pass: false, reason: "Deploy blocked: supplied base mint does not match the pool's current base mint." };
+      }
+      if (poolData.quote.mint !== config.tokens.SOL) {
+        return { pass: false, reason: "Deploy blocked: only SOL-quoted pools are supported by the approved risk policy." };
+      }
+      if (positions.positions.some((p) => p.base_mint === poolMint)) {
+        return { pass: false, reason: "Already holding this pool's base token in another position." };
       }
 
-      // Hard gate: global fees paid must meet minimum threshold (bundled/scam tokens have low fees)
-      const minFeesSol = config.screening.minTokenFeesSol ?? 30;
-      if (args.fees_sol == null && config.screening.antiRugStrict) {
-        return {
-          pass: false,
-          reason: `Deploy blocked: fees_sol not provided. antiRugStrict mode requires fees_sol to be verified — pass it from token info (global_fees_sol field).`,
-        };
+      // Final anti-rug preflight gate (strict mode), applies to ALL deploy paths.
+      if (!config.screening.antiRugStrict) {
+        return { pass: false, reason: "Deploy blocked: antiRugStrict must be enabled for the live risk policy." };
+      }
+      let adv, okxRisk, tokenInfo, gmgnSecurity, gmgnInfo;
+      try {
+        const [{ getAdvancedInfo, getRiskFlags }, { getGmgnSecurity, getGmgnInfo }] = await Promise.all([
+          import("./okx.js"), import("./gmgn.js"),
+        ]);
+        const results = await Promise.allSettled([
+          getAdvancedInfo(poolMint), getRiskFlags(poolMint), getTokenInfo({ query: poolMint }),
+          getGmgnSecurity(poolMint), getGmgnInfo(poolMint),
+        ]);
+        adv = results[0].status === "fulfilled" ? results[0].value : null;
+        okxRisk = results[1].status === "fulfilled" ? results[1].value : null;
+        const tokenResponse = results[2].status === "fulfilled" ? results[2].value : null;
+        tokenInfo = tokenResponse?.results?.find((token) => token.mint === poolMint) || null;
+        gmgnSecurity = results[3].status === "fulfilled" ? results[3].value : null;
+        gmgnInfo = results[4].status === "fulfilled" ? results[4].value : null;
+      } catch {
+        // Fail closed below; provider failures are unknown risk, not safe risk.
+      }
+      const riskResult = evaluateTokenRisk({
+        expectedMint: args.base_mint || poolMint,
+        poolMint,
+        tokenInfo,
+        okxAdvanced: adv,
+        okxRisk,
+        gmgnSecurity,
+        gmgnInfo,
+        screening: config.screening,
+      });
+      if (!riskResult.pass) return { pass: false, reason: `Deploy blocked: ${riskResult.reason}.` };
+
+      const minFeesSol = config.screening.minTokenFeesSol ?? 50;
+      const feesSol = Number(tokenInfo?.global_fees_sol);
+      if (!Number.isFinite(feesSol)) return { pass: false, reason: "Deploy blocked: current global token fees are unknown." };
+      if (feesSol < minFeesSol) {
+        return { pass: false, reason: `Deploy blocked: global token fees ${feesSol} SOL are below the ${minFeesSol} SOL limit.` };
       }
       if (args.fees_sol != null && args.fees_sol < minFeesSol) {
         return {
@@ -649,7 +598,16 @@ async function runSafetyChecks(name, args) {
         };
       }
 
-      const minDeploy = Math.max(0.1, config.management.deployAmountSol);
+      if (config.risk.maxPositions !== 1) {
+        return { pass: false, reason: "Deploy blocked: the approved canary policy permits one open position." };
+      }
+      if ((args.strategy ?? config.strategy.strategy) !== "spot") {
+        return { pass: false, reason: "Deploy blocked: the approved canary baseline requires the Spot strategy." };
+      }
+      if ((args.amount_x ?? 0) !== 0) {
+        return { pass: false, reason: "Deploy blocked: only a single SOL-side deposit is allowed by the canary policy." };
+      }
+      const minDeploy = 0.01;
       if (amountY < minDeploy) {
         return {
           pass: false,
@@ -663,26 +621,43 @@ async function runSafetyChecks(name, args) {
         };
       }
 
-      // Check SOL balance
+      // Check USD budget, portfolio loss state, and SOL operating reserve.
       // Includes binArrayRentBuffer: Meteora charges ~0.075 SOL non-refundable rent per binArray
       // account when a position uses bin ranges that have never been created before.
       // A typical position spans 1-2 binArrays → buffer = 0.15 SOL to avoid unexpected failures.
-      if (process.env.DRY_RUN !== "true") {
-        const balance = await getWalletBalances();
-        const gasReserve = config.management.gasReserve;
-        const binArrayBuffer = config.management.binArrayRentBuffer ?? 0.15;
-        const minRequired = amountY + gasReserve + binArrayBuffer;
-        if (balance.sol < minRequired) {
-          return {
-            pass: false,
-            reason: `Insufficient SOL: have ${balance.sol.toFixed(3)} SOL, need ${minRequired.toFixed(3)} SOL (${amountY} deploy + ${gasReserve} gas + ${binArrayBuffer} binArray rent buffer). Note: binArray rent is non-refundable if this pool's bins have never been initialized.`,
-          };
-        }
-        // Warn but don't block if balance is thin after binArray buffer
-        if (balance.sol < minRequired + 0.05) {
-          log("executor", `⚠️  Low SOL buffer after deploy: ${(balance.sol - minRequired).toFixed(3)} SOL remaining. If pool bins are uninitialized, transaction may fail.`);
-        }
+      if (balance?.error || !Number.isFinite(balance.sol) || !Number.isFinite(balance.sol_price) || balance.sol_price <= 0) {
+        return { pass: false, reason: "Deploy blocked: SOL balance and USD price could not be verified." };
       }
+      const exposureUsd = positions.positions.reduce((sum, p) => {
+        const value = p.total_value_true_usd;
+        const fees = p.unclaimed_fees_true_usd;
+        return sum + (Number.isFinite(value) ? value : 0) + (Number.isFinite(fees) ? fees : 0);
+      }, 0);
+      let riskStatus = null;
+      if (process.env.DRY_RUN !== "true") {
+        riskStatus = checkPortfolioRisk({
+          balance,
+          positions,
+          expectedWallet: process.env.SUNSTRIKE_LIVE_WALLET,
+          risk: config.risk,
+        });
+        if (!riskStatus.allowed) return { pass: false, reason: `Deploy blocked: ${riskStatus.reason}.` };
+      }
+      const usdCheck = validateNewPosition({
+        amountSol: amountY,
+        solPrice: balance.sol_price,
+        walletUsd: balance.total_usd,
+        currentExposureUsd: riskStatus?.snapshot?.open_exposure_usd ?? exposureUsd,
+        risk: config.risk,
+      });
+      if (!usdCheck.pass) return { pass: false, reason: `Deploy blocked: ${usdCheck.reason}.` };
+      const gasReserve = config.management.gasReserve;
+      const binArrayBuffer = config.management.binArrayRentBuffer ?? 0.15;
+      const minRequired = amountY + gasReserve + binArrayBuffer;
+      if (balance.sol < minRequired) {
+        return { pass: false, reason: `Insufficient SOL: have ${balance.sol.toFixed(3)} SOL, need ${minRequired.toFixed(3)} SOL including deploy and fee/rent reserve.` };
+      }
+      args.initial_value_usd = usdCheck.amountUsd;
 
       return { pass: true };
     }

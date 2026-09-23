@@ -13,7 +13,7 @@ import { getWalletBalances } from "./tools/wallet.js";
 import { getTopCandidates, getVolumeTrend } from "./tools/screening.js";
 import { config, reloadScreeningThresholds, computeDeployAmount } from "./config.js";
 import { evolveThresholds, getPerformanceSummary } from "./lessons.js";
-import { registerCronRestarter } from "./tools/executor.js";
+import { registerCronRestarter, executeTool } from "./tools/executor.js";
 import { startPolling, stopPolling, sendMessage, sendHTML, notifyOutOfRange, isEnabled as telegramEnabled, createLiveMessage } from "./telegram.js";
 import { generateBriefing } from "./briefing.js";
 import { getLastBriefingDate, setLastBriefingDate, getTrackedPosition, setPositionInstruction, updatePnlAndCheckExits, queuePeakConfirmation, resolvePendingPeak, queueTrailingDropConfirmation, resolvePendingTrailingDrop } from "./state.js";
@@ -22,8 +22,10 @@ import { recordPositionSnapshot, recallForPool, addPoolNote } from "./pool-memor
 import { checkSmartWalletsOnPool } from "./smart-wallets.js";
 import { getTokenNarrative, getTokenInfo } from "./tools/token.js";
 import { getPoolDetail } from "./tools/screening.js";
-import { computeEvilPandaDeployPlan, formatEvilPandaDeployPlan, getEvilPandaThresholds } from "./evilpanda-policy.js";
+import { computeEvilPandaDeployPlan, formatEvilPandaDeployPlan } from "./evilpanda-policy.js";
 import { recordJevShadow } from "./tools/jev-shadow.js";
+import { checkPortfolioRisk, markLiquidationAttempt } from "./portfolio-risk.js";
+import { evaluateTokenRisk } from "./token-risk-policy.js";
 
 log("startup", "DLMM LP Agent starting...");
 log("startup", `Mode: ${process.env.DRY_RUN === "true" ? "DRY RUN" : "LIVE"}`);
@@ -71,6 +73,8 @@ let _pollTriggeredAt = 0; // epoch ms — cooldown for poller-triggered manageme
 const _peakConfirmTimers = new Map();
 const _trailingDropConfirmTimers = new Map();
 const _suspectPnlSince = new Map(); // positionAddress → firstSuspectAt (ms)
+let _lastBreakerNoticeAt = 0;
+let _lastRiskReadFailureAt = 0;
 const TRAILING_PEAK_CONFIRM_DELAY_MS = 15_000;
 const TRAILING_PEAK_CONFIRM_TOLERANCE = 0.85;
 const TRAILING_DROP_CONFIRM_DELAY_MS = 15_000;
@@ -497,11 +501,28 @@ export async function runScreeningCycle({ silent = false } = {}) {
 
   // Hard guards — don't even run the agent if preconditions aren't met
   let prePositions, preBalance;
+  let deployAmount = 0;
   let liveMessage = null;
   let screenReport = null;
   try {
     [prePositions, preBalance] = await Promise.all([getMyPositions({ force: true }), getWalletBalances()]);
     assertScreeningInputs(prePositions, preBalance);
+    deployAmount = computeDeployAmount(preBalance.sol, preBalance.sol_price);
+    const isDryRun = process.env.DRY_RUN === "true";
+    if (!isDryRun) {
+      const riskStatus = checkPortfolioRisk({
+        balance: preBalance,
+        positions: prePositions,
+        expectedWallet: process.env.SUNSTRIKE_LIVE_WALLET,
+        risk: config.risk,
+      });
+      if (!riskStatus.allowed) {
+        log("portfolio_risk", `Screening blocked: ${riskStatus.reason}${riskStatus.netLossUsd != null ? `; net loss $${riskStatus.netLossUsd.toFixed(2)}` : ""}`);
+        screenReport = `Screening blocked by portfolio risk policy: ${riskStatus.reason}.`;
+        _screeningBusy = false;
+        return screenReport;
+      }
+    }
     if (prePositions.total_positions >= config.risk.maxPositions) {
       log("cron", `Screening skipped — max positions reached (${prePositions.total_positions}/${config.risk.maxPositions})`);
       screenReport = `Screening skipped — max positions reached (${prePositions.total_positions}/${config.risk.maxPositions}).`;
@@ -509,8 +530,13 @@ export async function runScreeningCycle({ silent = false } = {}) {
       return screenReport;
     }
     const binArrayBuffer = config.management.binArrayRentBuffer ?? 0.15;
-    const minRequired = config.management.deployAmountSol + config.management.gasReserve + binArrayBuffer;
-    const isDryRun = process.env.DRY_RUN === "true";
+    const minRequired = Math.max(config.management.minSolToOpen ?? 0, deployAmount + config.management.gasReserve + binArrayBuffer);
+    if (deployAmount < 0.01) {
+      log("portfolio_risk", "Screening blocked: USD position budget cannot fund the 0.01 SOL minimum.");
+      screenReport = "Screening blocked: USD position budget cannot fund the 0.01 SOL minimum.";
+      _screeningBusy = false;
+      return screenReport;
+    }
     if (!isDryRun && preBalance.sol < minRequired) {
       log("cron", `Screening skipped — insufficient SOL (${preBalance.sol.toFixed(3)} < ${minRequired.toFixed(3)} needed for deploy + gas + binArray rent buffer)`);
       screenReport = `Screening skipped — insufficient SOL (${preBalance.sol.toFixed(3)} < ${minRequired.toFixed(3)} needed for deploy + gas + binArray rent buffer).`;
@@ -531,8 +557,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
   try {
     // Reuse pre-fetched balance — no extra RPC call needed
     const currentBalance = preBalance;
-    const deployAmount = computeDeployAmount(currentBalance.sol);
-    log("cron", `Computed deploy amount: ${deployAmount} SOL (wallet: ${currentBalance.sol} SOL)`);
+    log("cron", `Computed deploy amount: ${deployAmount} SOL (~$${(deployAmount * currentBalance.sol_price).toFixed(2)}; wallet: $${currentBalance.total_usd.toFixed(2)})`);
 
     // Load active strategy for display only. EvilPanda runtime policy computes deploy shape.
     const activeStrategy = getActiveStrategy();
@@ -555,7 +580,9 @@ export async function runScreeningCycle({ silent = false } = {}) {
           pool,
           sw: smartWallets.status === "fulfilled" ? smartWallets.value : null,
           n: narrative.status === "fulfilled" ? narrative.value : null,
-          ti: tokenInfo.status === "fulfilled" ? tokenInfo.value?.results?.[0] : null,
+          ti: tokenInfo.status === "fulfilled"
+            ? tokenInfo.value?.results?.find((item) => item.mint === mint) || null
+            : null,
           mem: poolAddress ? recallForPool(poolAddress) : null,
           source: label,
         });
@@ -574,7 +601,6 @@ export async function runScreeningCycle({ silent = false } = {}) {
 
     // Hard filters after token recon — block launchpads and excessive Jupiter bot holders
     const filteredOut = [];
-    const evilPandaThresholds = getEvilPandaThresholds(config.screening);
     const applyPostReconFilters = (items) => items.filter(({ pool, ti }) => {
       const launchpad = ti?.launchpad ?? null;
       if (launchpad && config.screening.allowedLaunchpads?.length > 0 && !config.screening.allowedLaunchpads.includes(launchpad)) {
@@ -587,37 +613,23 @@ export async function runScreeningCycle({ silent = false } = {}) {
         filteredOut.push({ name: pool.name, reason: `blocked launchpad (${launchpad})` });
         return false;
       }
-      const botPct = ti?.audit?.bot_holders_pct;
-      const maxBotHoldersPct = Math.max(config.screening.maxBotHoldersPct ?? 30, 30);
-      if (botPct != null && maxBotHoldersPct != null && botPct > maxBotHoldersPct) {
-        log("screening", `Bot-holder filter: dropped ${pool.name} — bots ${botPct}% > ${maxBotHoldersPct}%`);
-        filteredOut.push({ name: pool.name, reason: `bot holders ${botPct}% > ${maxBotHoldersPct}%` });
-        return false;
-      }
       if (config.screening.antiRugStrict) {
-        const top10Pct = ti?.audit?.top_holders_pct;
-        const maxTop10Pct = evilPandaThresholds.maxTop10Pct;
-        if (top10Pct != null && maxTop10Pct != null && top10Pct > maxTop10Pct) {
-          log("screening", `Top10 filter: dropped ${pool.name} — top10 ${top10Pct}% > ${maxTop10Pct}%`);
-          filteredOut.push({ name: pool.name, reason: `top10 ${top10Pct}% > ${maxTop10Pct}%` });
+        const risk = evaluateTokenRisk({
+          expectedMint: pool.base?.mint,
+          poolMint: pool.base?.mint,
+          tokenInfo: ti,
+          okxAdvanced: pool.okx_advanced,
+          okxRisk: pool.okx_risk,
+          gmgnSecurity: pool.gmgn_security,
+          gmgnInfo: pool.gmgn_info,
+          screening: config.screening,
+        });
+        if (!risk.pass) {
+          log("screening", `Post-recon risk gate: dropped ${pool.name} — ${risk.reason}`);
+          filteredOut.push({ name: pool.name, reason: risk.reason });
           return false;
         }
-        if (config.screening.requireRenouncedMint && pool.renounced_mint === false) {
-          log("screening", `Renounced filter: dropped ${pool.name} — renounced_mint=false`);
-          filteredOut.push({ name: pool.name, reason: "renounced_mint=false" });
-          return false;
-        }
-        const maxRatTraderPct = evilPandaThresholds.maxRatTraderPct;
-        if (pool.rat_trader_pct != null && maxRatTraderPct != null && pool.rat_trader_pct > maxRatTraderPct) {
-          log("screening", `Rat trader filter: dropped ${pool.name} — ${pool.rat_trader_pct}% > ${maxRatTraderPct}%`);
-          filteredOut.push({ name: pool.name, reason: `rat_trader ${pool.rat_trader_pct}% > ${maxRatTraderPct}%` });
-          return false;
-        }
-        if (pool.is_rugpull === true) {
-          log("screening", `Risk filter: dropped ${pool.name} — rugpull flagged`);
-          filteredOut.push({ name: pool.name, reason: "rugpull flagged" });
-          return false;
-        }
+        pool.risk_metrics = risk.metrics;
       }
       return true;
     });
@@ -718,7 +730,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
     const { content } = await agentLoop(`
 SCREENING CYCLE
 ${strategyBlock}
-Positions: ${prePositions.total_positions}/${config.risk.maxPositions} | SOL: ${currentBalance.sol.toFixed(3)} | Deploy: ${deployAmount} SOL
+Positions: ${prePositions.total_positions}/${config.risk.maxPositions} | SOL: ${currentBalance.sol.toFixed(3)} | Deploy: ${deployAmount} SOL (~$${(deployAmount * currentBalance.sol_price).toFixed(2)})
 
 PRE-LOADED CANDIDATES (${passing.length} pools):
 ${candidateBlocks.join("\n\n")}
@@ -741,7 +753,7 @@ STEPS:
    <pool name>
    <pool address>
 
-   ◎ ${deployAmount} SOL | <strategy> | bin <active_bin>
+   ◎ ${deployAmount} SOL (~$${(deployAmount * currentBalance.sol_price).toFixed(2)}) | <strategy> | bin <active_bin>
    Range: bin <active_bin - bins_below> → <active_bin>
    Downside buffer: <negative %>
 
@@ -863,7 +875,48 @@ Summarize the current portfolio health, total fees earned, and performance of al
     if (_managementBusy || _screeningBusy || _pnlPollBusy) return;
     _pnlPollBusy = true;
     try {
-      const result = await getMyPositions({ force: true, silent: true }).catch(() => null);
+      const [result, balance] = await Promise.all([
+        getMyPositions({ force: true, silent: true }).catch(() => null),
+        process.env.DRY_RUN === "true" ? Promise.resolve(null) : getWalletBalances().catch(() => null),
+      ]);
+      if (process.env.DRY_RUN !== "true") {
+        const riskStatus = checkPortfolioRisk({
+          balance,
+          positions: result,
+          expectedWallet: process.env.SUNSTRIKE_LIVE_WALLET,
+          risk: config.risk,
+        });
+        if (riskStatus.tripped) {
+          if (Date.now() - _lastBreakerNoticeAt >= 5 * 60_000) {
+            _lastBreakerNoticeAt = Date.now();
+            const lossLabel = Number.isFinite(riskStatus.netLossUsd) ? `$${riskStatus.netLossUsd.toFixed(2)}` : "unknown (risk accounting incomplete)";
+            log("portfolio_risk", `Circuit breaker latched at net loss ${lossLabel}; closing ${result?.positions?.length ?? 0} open position(s).`);
+            if (telegramEnabled()) sendMessage(`⛔ Portfolio risk breaker latched; net loss is ${lossLabel}. New entries are locked; open positions are being closed.`).catch(() => {});
+          }
+          const lastAttempt = Date.parse(riskStatus.state?.last_liquidation_attempt_at || "");
+          if (result?.positions?.length && (!Number.isFinite(lastAttempt) || Date.now() - lastAttempt >= 120_000)) {
+            try {
+              markLiquidationAttempt();
+            } catch (error) {
+              log("portfolio_risk_warn", `Could not persist liquidation attempt time: ${error.message}`);
+            }
+            for (const position of result.positions) {
+              const closeResult = await executeTool("close_position", {
+                position_address: position.position,
+                reason: "portfolio loss circuit breaker",
+              });
+              if (closeResult?.success !== true) {
+                log("portfolio_risk_warn", `Breaker close failed for ${position.position.slice(0, 8)}; will retry after the cooldown.`);
+              }
+            }
+          }
+          return;
+        }
+        if (!riskStatus.allowed && Date.now() - _lastRiskReadFailureAt >= 5 * 60_000) {
+          _lastRiskReadFailureAt = Date.now();
+          log("portfolio_risk_warn", `Risk snapshot unavailable; new entries remain blocked: ${riskStatus.reason}`);
+        }
+      }
       if (!result?.positions?.length) return;
       for (const p of result.positions) {
         if (!p.pnl_pct_suspicious && queuePeakConfirmation(p.position, p.pnl_pct)) {

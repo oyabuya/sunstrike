@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { assertScreeningInputs } from '../screening-readiness.js';
 const positions = { positions: [], total_positions: 0 };
-const balance = { wallet: 'test-wallet', sol: 0, total_usd: 0 };
+const balance = { wallet: 'test-wallet', sol: 0, sol_price: 100, total_usd: 0 };
 test('verified empty wallet is valid for dry-run screening', () => {
   assert.doesNotThrow(() => assertScreeningInputs(positions, balance));
 });

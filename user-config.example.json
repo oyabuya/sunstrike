@@ -1,5 +1,6 @@
 {
   "dryRun": true,
+  "strategy": "spot",
   "maxPositions": 1,
   "autoCompoundEnabled": false,
   "managementModel": "openai/gpt-4.1-mini",

@@ -7,6 +7,7 @@ export function assertScreeningInputs(positions, balance) {
   }
   if (balance?.error || !balance?.wallet ||
       !Number.isFinite(balance.sol) || balance.sol < 0 ||
+      !Number.isFinite(balance.sol_price) || balance.sol_price <= 0 ||
       !Number.isFinite(balance.total_usd) || balance.total_usd < 0) {
     throw new Error('Screening blocked: wallet balance could not be verified');
   }

@@ -454,6 +454,18 @@ function safeNum(value) {
   return Number.isFinite(n) ? n : 0;
 }
 
+function finiteOrNull(value) {
+  if (value == null || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function sumFiniteOrNull(a, b) {
+  const left = finiteOrNull(a);
+  const right = finiteOrNull(b);
+  return left == null || right == null ? null : left + right;
+}
+
 function deriveOpenPnlPct(binData, solMode = false) {
   if (!binData) return null;
 
@@ -600,9 +612,9 @@ export async function getMyPositions({ force = false, silent = false } = {}) {
             : null,
           // Always-USD fields for internal accounting and lesson recording.
           total_value_true_usd: lpData
-            ? Math.round(safeNum(lpData.value) * 10000) / 10000
+            ? (finiteOrNull(lpData.value) == null ? null : Math.round(finiteOrNull(lpData.value) * 10000) / 10000)
             : binData
-            ? Math.round(parseFloat(binData.unrealizedPnl?.balances || 0) * 10000) / 10000
+            ? (finiteOrNull(binData.unrealizedPnl?.balances) == null ? null : Math.round(finiteOrNull(binData.unrealizedPnl?.balances) * 10000) / 10000)
             : null,
           collected_fees_usd: lpData
             ? Math.round((
@@ -639,9 +651,12 @@ export async function getMyPositions({ force = false, silent = false } = {}) {
           pnl_pct_diff:       pnlPctDiff != null ? Math.round(pnlPctDiff * 100) / 100 : null,
           pnl_pct_suspicious: !!pnlPctSuspicious,
           unclaimed_fees_true_usd: lpData
-            ? Math.round(safeNum(lpData.unCollectedFee) * 10000) / 10000
+            ? (finiteOrNull(lpData.unCollectedFee) == null ? null : Math.round(finiteOrNull(lpData.unCollectedFee) * 10000) / 10000)
             : binData
-            ? Math.round((parseFloat(binData.unrealizedPnl?.unclaimedFeeTokenX?.usd || 0) + parseFloat(binData.unrealizedPnl?.unclaimedFeeTokenY?.usd || 0)) * 10000) / 10000
+            ? (() => {
+                const fees = sumFiniteOrNull(binData.unrealizedPnl?.unclaimedFeeTokenX?.usd, binData.unrealizedPnl?.unclaimedFeeTokenY?.usd);
+                return fees == null ? null : Math.round(fees * 10000) / 10000;
+              })()
             : null,
           fee_per_tvl_24h:    binData
             ? Math.round(parseFloat(binData.feePerTvl24h || 0) * 100) / 100
@@ -664,7 +679,7 @@ export async function getMyPositions({ force = false, silent = false } = {}) {
       }
     }
 
-    const result = { wallet: walletAddress, total_positions: positions.length, positions };
+    const result = { wallet: walletAddress, total_positions: positions.length, positions, observed_at: new Date().toISOString() };
     syncOpenPositions(positions.map(p => p.position));
     _positionsCache = result;
     _positionsCacheAt = Date.now();

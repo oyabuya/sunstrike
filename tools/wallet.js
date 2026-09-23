@@ -65,6 +65,10 @@ export async function getWalletBalances() {
     }
 
     const data = await res.json();
+    const totalUsdValue = Number(data.totalUsdValue);
+    if (data.totalUsdValue == null || !Number.isFinite(totalUsdValue) || totalUsdValue < 0) {
+      throw new Error("Helius wallet USD valuation is missing or invalid");
+    }
     const balances = data.balances || [];
 
     // ─── Find SOL and USDC ────────────────────────────────────
@@ -91,7 +95,8 @@ export async function getWalletBalances() {
       sol_usd: Math.round(solUsd * 100) / 100,
       usdc: Math.round(usdcBalance * 100) / 100,
       tokens: enrichedTokens,
-      total_usd: Math.round((data.totalUsdValue || 0) * 100) / 100,
+      total_usd: Math.round(totalUsdValue * 100) / 100,
+      observed_at: new Date().toISOString(),
     };
   } catch (error) {
     log("wallet_error", error.message);
