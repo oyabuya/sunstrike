@@ -1,6 +1,9 @@
 import "dotenv/config";
 import cron from "node-cron";
 import readline from "readline";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+const isDirectRun = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 import { agentLoop } from "./agent.js";
 import { log, logAction } from "./logger.js";
 import { getMyPositions, closePosition, getActiveBin } from "./tools/dlmm.js";
@@ -940,8 +943,10 @@ async function shutdown(signal) {
   process.exit(0);
 }
 
-process.on("SIGINT", () => shutdown("SIGINT"));
-process.on("SIGTERM", () => shutdown("SIGTERM"));
+if (isDirectRun) {
+  process.on("SIGINT", () => shutdown("SIGINT"));
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+}
 
 // ═══════════════════════════════════════════
 //  FORMAT CANDIDATES TABLE
@@ -1102,7 +1107,7 @@ async function telegramHandler(msg) {
 // Register restarter — when update_config changes intervals, running cron jobs get replaced
 registerCronRestarter(() => { if (cronStarted) startCronJobs(); });
 
-if (isTTY) {
+if (isDirectRun && isTTY) {
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
@@ -1398,7 +1403,7 @@ Focus on: hold duration, entry/exit timing, what win rates look like, whether sc
 
   rl.on("close", () => shutdown("stdin closed"));
 
-} else {
+} else if (isDirectRun) {
   // Non-TTY: start immediately
   log("startup", "Non-TTY mode — starting cron cycles immediately.");
   startCronJobs();
