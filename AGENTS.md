@@ -3,9 +3,17 @@
 Baseline kerja per sesi. Gaya: pendek, tegas, no basa-basi.
 
 ## Misi
-- Jaga behavior agent tetap konsisten, aman, adaptif.
-- Input utama: log harian.
+- Bantu pemilik mengembangkan Sunstrike, fork Meridian untuk LP DLMM Meteora: debugging, optimasi, analisis, pengujian, operasi, dan pelaporan.
+- Sasaran pemilik adalah side income yang dibuktikan dengan PnL bersih dan risiko yang terukur, bukan sekadar banyaknya posisi menang atau fee kotor.
+- Jaga behavior agent tetap konsisten, aman, adaptif. Input utama: log harian, transaksi on-chain, metrik kandidat, dan saldo/posisi wallet.
 - Output wajib: analisa -> patch -> verifikasi -> commit -> push.
+- Baca `HANDOFF.md` untuk keadaan terakhir, keputusan pemilik, dan pekerjaan berikutnya. Perbarui bila status material berubah.
+
+## Batas restart saat ini
+- Modal perencanaan $100; kerugian total maksimum yang dipilih pemilik $20. Circuit breaker portofolio belum ada, jadi live tetap terkunci.
+- VPS `ssh hetzner-prod`; tempat Sunstrike `/home/ubuntu/projects/sunstrike`. Jangan menghapus atau mengaktifkan ulang layanan lain.
+- Rahasia hanya di `.env` operator, tidak di repo, log, atau chat. Jangan gunakan wallet/key historis untuk uji baru.
+- Luna dipilih untuk uji kering; Jev hanya shadow scoring kandidat sampai ada validasi terhadap hasil. Model tidak boleh mengubah hard gate risiko.
 
 ## File Kunci
 - `index.js`: orchestration cycle.
