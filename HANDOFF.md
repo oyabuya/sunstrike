@@ -75,3 +75,10 @@ Terakhir diperbarui: 2026-09-23. Baca `AGENTS.md` dan `RESTART_AUDIT_2026-09-23.
 - Pemilik meminta screening diuji lalu 2–3 dry run tambahan sebelum menilai live. Disiapkan tiga uji integrasi berjarak 60 detik; ini bukan validasi profit atau izin melewati batas rugi portofolio.
 - `assertScreeningInputs` memblokir error/mismatch posisi dan saldo invalid sebelum screening. Runner `scripts/three-dry-run-checks.js` tidak mengirim pesan, memaksa dry run/live off, menyimpan status terstruktur dan selalu `live_ready=false`.
 - Runner sepuluh siklus lama akan dihentikan secara terarah sebelum pengganti dijalankan. Artefak historis tetap disimpan. Live masih belum layak sampai circuit breaker $20, nilai wallet+LP terverifikasi dan rekonsiliasi memenuhi gate sebelumnya.
+
+### Hasil tiga uji tambahan
+
+- VPS 2026-09-23 17:37:30–17:40:50 UTC: siklus 1 no-entry; siklus 2 simulated entry Stamp-SOL (0,5 SOL); siklus 3 no-entry pada kandidat sama karena pemeriksaan risiko tidak lengkap. Tidak ada transaksi, runner selesai. 16 tes regresi lulus sebelum run.
+- Hasil memperlihatkan ketidakkonsistenan keputusan terhadap data risiko yang kurang, bukan akurasi profit. Advanced-info/price-info/cluster-list OKX unavailable; beberapa metrik wajib menurut prompt tidak tersedia. Sizing masih 0,5 SOL dan belum ditautkan ke anggaran USD.
+- Tindak lanjut kode: hilangkan pengecualian dry-run pada verifikasi posisi, identitas mint pool dan ketersediaan data risiko preflight executor. Simulasi kini wajib memenuhi gate data yang sama dengan live; pengecekan saldo transaksi tetap khusus live. Tiga hasil di atas berasal dari sebelum patch parity ini, sehingga bukan verifikasi pasar untuk patch terakhir.
+- Keputusan: belum live. Gate $20 tahan restart, rekonsiliasi dan validasi data risiko lengkap masih terbuka. Tidak menganggap keberhasilan tool dry-run sebagai otorisasi atau bukti kesiapan live.

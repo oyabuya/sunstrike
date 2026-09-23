@@ -479,7 +479,7 @@ async function runSafetyChecks(name, args) {
 
       // Check position count limit + duplicate pool guard — force fresh scan to avoid stale cache
       const positions = await getMyPositions({ force: true });
-      if (process.env.DRY_RUN !== "true" && (positions?.error || !Array.isArray(positions?.positions) || !Number.isInteger(positions?.total_positions))) {
+      if ((positions?.error || !Array.isArray(positions?.positions) || !Number.isInteger(positions?.total_positions))) {
         return { pass: false, reason: "Deploy blocked: open positions could not be verified." };
       }
       if (positions.total_positions >= config.risk.maxPositions) {
@@ -533,7 +533,7 @@ async function runSafetyChecks(name, args) {
       } catch {
         // non-blocking — skip check if pool detail unavailable
       }
-      if (process.env.DRY_RUN !== "true" && (!poolData?.quote?.mint || !poolData?.base?.mint)) {
+      if ((!poolData?.quote?.mint || !poolData?.base?.mint)) {
         return { pass: false, reason: "Deploy blocked: current pool and token mints could not be verified." };
       }
 
@@ -566,8 +566,8 @@ async function runSafetyChecks(name, args) {
             // non-blocking — provider unavailable, rely on existing checks
           }
 
-          if (process.env.DRY_RUN !== "true" && (!okxRisk || !tokenInfo || (process.env.GMGN_API_KEY && !gmgnSec))) {
-            return { pass: false, reason: "Deploy blocked: required live token-risk data is unavailable." };
+          if ((!okxRisk || !tokenInfo || (process.env.GMGN_API_KEY && !gmgnSec))) {
+            return { pass: false, reason: "Deploy blocked: required token-risk data is unavailable." };
           }
 
           if (okxRisk?.is_rugpull === true) {
