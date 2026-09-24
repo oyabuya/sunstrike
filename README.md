@@ -36,6 +36,9 @@ preflight still apply. This admits pools with sustained 2h activity even when
 their latest 5m volume is below the 5m threshold.
 Every candidate is also checked against the Solana RPC for an existing account
 owned by the Meteora DLMM program before it is shown to the agent.
+During an automated screening cycle, `deploy_position` accepts only an exact
+pool address from that cycle's shortlist; a mistyped address is returned to the
+agent with the canonical addresses for retry.
 
 ---
 

@@ -146,7 +146,7 @@ function isToolChoiceRequiredError(error) {
  * @returns {string} - The agent's final text response
  */
 export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHistory = [], agentType = "GENERAL", model = null, maxOutputTokens = null, options = {}) {
-  const { requireTool = false, interactive = false, onToolStart = null, onToolFinish = null } = options;
+  const { requireTool = false, interactive = false, onToolStart = null, onToolFinish = null, allowedDeployPoolAddresses = null } = options;
   // Build dynamic system prompt with current portfolio state
   const [portfolio, positions] = await Promise.all([getWalletBalances(), getMyPositions()]);
   const stateSummary = getStateSummary();
@@ -355,6 +355,14 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
             log("error", `Failed to parse args for ${functionName}: ${parseError.message}`);
             functionArgs = {};
           }
+        }
+
+        if (functionName === "deploy_position" && Array.isArray(allowedDeployPoolAddresses) &&
+            !allowedDeployPoolAddresses.includes(functionArgs.pool_address)) {
+          const reason = `Pool address does not match the screened shortlist. Copy one exact address: ${allowedDeployPoolAddresses.join(", ")}`;
+          log("agent", `Rejected unscreened deploy address ${String(functionArgs.pool_address || "").slice(0, 8)}`);
+          await onToolFinish?.({ name: functionName, args: functionArgs, result: { blocked: true, reason }, success: false, step });
+          return { role: "tool", tool_call_id: toolCall.id, content: JSON.stringify({ blocked: true, reason }) };
         }
 
         // Block once-per-session tools from firing a second time.
