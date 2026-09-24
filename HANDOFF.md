@@ -2,6 +2,7 @@
 
 ## Pembaruan 25 September 2026
 
+- Audit permintaan LIVE (25 September sekitar 03:00 WIB): VPS masih commit `c4a88fd`, service active, `.env` `DRY_RUN=true` dan `SUNSTRIKE_LIVE_ENABLED=true`. Snapshot wallet segar: 0,041407 SOL cair, nilai wallet $41,31, dua posisi terbuka bernilai LP sekitar $51,16, equity sekitar $92,47. `assertLiveConfiguration()` lulus dan portfolio risk mengizinkan snapshot, tetapi `switchRuntimeMode("LIVE")` akan menolak saldo SOL karena `minSolToOpen=0,55 SOL`. Dua posisi juga memenuhi batas maksimum. Log close 02:48 WIB adalah simulasi `dry_run=true`, bukan transaksi close yang gagal on-chain. Jangan aktifkan LIVE sampai saldo/reserve dan status posisi ditinjau ulang. Pemeriksaan portfolio risk memperbarui `last_snapshot` ledger pada VPS; tidak ada transaksi atau perubahan mode. Patch log `b3b8fef` belum dideploy ke VPS.
 - Permintaan observabilitas screening: action log per `cycle_id` kini menghubungkan `screening_funnel`, `screening_candidates`, `jev_shadow`, dan `screening_decision`. Shortlist memuat metrik 5m, audit, skor, dan skenario fee; penolakan lokal memuat pool/mint/alasan; keputusan mencatat status Jev, skor Jev, laporan Luna, serta percobaan deploy nyata/simulasi. Filter dan otoritas eksekusi tidak berubah. 23 suite tes lokal lulus; belum ada sampel siklus atau hasil PnL pascapatch.
 
 ## Keputusan pemilik terbaru — 24 September 2026
