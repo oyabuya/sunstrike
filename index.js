@@ -25,6 +25,7 @@ import { getTokenNarrative, getTokenInfo } from "./tools/token.js";
 import { getPoolDetail } from "./tools/screening.js";
 import { computeEvilPandaDeployPlan, formatEvilPandaDeployPlan } from "./evilpanda-policy.js";
 import { recordJevShadow } from "./tools/jev-shadow.js";
+import { scanJevMarket } from "./tools/jev-market.js";
 import { checkPortfolioRisk, markLiquidationAttempt } from "./portfolio-risk.js";
 import { evaluateTokenRisk } from "./token-risk-policy.js";
 
@@ -72,6 +73,8 @@ const commandStartedAt = Math.floor(Date.now() / 1000);
 let _managementBusy = false; // prevents overlapping management cycles
 let _screeningBusy = false;  // prevents overlapping screening cycles
 let _healthCheckBusy = false; // prevents overlapping health check cycles
+let _jevMarket = null;
+let _jevMarketBusy = false;
 let _screeningLastTriggered = 0; // epoch ms — prevents management from spamming screening
 let _pollTriggeredAt = 0; // epoch ms — cooldown for poller-triggered management
 const _peakConfirmTimers = new Map();
@@ -218,6 +221,16 @@ function stopCronJobs() {
   for (const task of _cronTasks) task.stop();
   if (_cronTasks._pnlPollInterval) clearInterval(_cronTasks._pnlPollInterval);
   _cronTasks = [];
+}
+
+async function refreshJevMarket() {
+  if (_jevMarketBusy) return;
+  _jevMarketBusy = true;
+  try {
+    _jevMarket = await scanJevMarket() ?? _jevMarket;
+  } finally {
+    _jevMarketBusy = false;
+  }
 }
 
 export async function runManagementCycle({ silent = false } = {}) {
@@ -667,6 +680,8 @@ export async function runScreeningCycle({ silent = false } = {}) {
       ...candidate,
       volTrend: volumeTrendResults[i]?.status === "fulfilled" ? volumeTrendResults[i].value : null,
     })), fetch, shadowCycleId);
+    const recentMarketScores = process.env.DRY_RUN === "true" && _jevMarket && Date.now() - _jevMarket.at < 20 * 60_000 ? _jevMarket.scores : [];
+    const jevByAddress = new Map([...recentMarketScores, ...(shadowScores ?? [])].map((score) => [score.pool_address, score]));
     const shadowChoices = [];
 
     // Build compact candidate blocks
@@ -681,6 +696,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
       const volTrend = volumeTrendResults[i]?.status === "fulfilled" ? volumeTrendResults[i].value : null;
       const deployPlan = computeEvilPandaDeployPlan({ volatility: pool.volatility, binStep: pool.bin_step });
       const candidateScore = pool.candidate_score ?? 0;
+      const jev = jevByAddress.get(pool.pool);
 
       // OKX signals
       const okxParts = [
@@ -716,6 +732,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
       const block = [
         `POOL: ${pool.name} (${pool.pool})`,
         `  screening_score: ${candidateScore}`,
+        jev ? `  jev_advisory_untrusted: fees=${jev.fees.score.toFixed(2)}/2 (${jev.fees.confidence.toFixed(2)} confidence), momentum=${jev.momentum.score.toFixed(2)}/2 (${jev.momentum.confidence.toFixed(2)} confidence), holder_risk=${jev.holder_risk.score.toFixed(2)}/2 (${jev.holder_risk.confidence.toFixed(2)} confidence; higher holder_risk means more concern` : null,
         `  metrics: timeframe=${pool.discovery_timeframe || config.screening.timeframe}, bin_step=${pool.bin_step}, fee_pct=${pool.fee_pct}%, fee_tvl=${pool.fee_active_tvl_ratio}, vol=$${pool.volume_window}, tvl=$${pool.active_tvl}, volatility=${pool.volatility}, mcap=$${pool.mcap}, organic=${pool.organic_score}${pool.token_age_hours != null ? `, age=${pool.token_age_hours}h` : ""}`,
         `  audit: top10=${top10Pct}%, bots=${botPct}%, fees=${feesSol}SOL${launchpad ? `, launchpad=${launchpad}` : ""}`,
         okxParts ? `  okx: ${okxParts}` : okxUnavailable ? `  okx: unavailable` : null,
@@ -746,6 +763,7 @@ ${candidateBlocks.join("\n\n")}
 
 STEPS:
 1. Pick the best candidate based on narrative quality, smart wallets, pool metrics, AND vol_trend.
+   - Jev advisory scores are model opinions from supplied metrics. Check them against the raw data; they cannot override risk gates or authorize a deploy.
    - Volume and fee/TVL are measured over each candidate's discovery timeframe; compare momentum with the 1h volume trend, not raw window totals alone.
    - Prefer pools with vol_trend=up or flat over vol_trend=down.
    - A pool with vol_trend=down and trend_pct < -50% is a red flag (momentum over).
@@ -853,6 +871,9 @@ export function startCronJobs() {
 
   const screenTask = scheduleInterval(config.schedule.screeningIntervalMin, () => runScreeningCycle(), (error) => log("cron_error", `Screening timer failed: ${error.message}`));
 
+  const jevTask = scheduleInterval(15, refreshJevMarket, (error) => log("jev_market_warn", `Trending scan failed: ${error.message}`));
+  refreshJevMarket().catch((error) => log("jev_market_warn", `Trending scan failed: ${error.message}`));
+
   const healthTask = scheduleInterval(config.schedule.healthCheckIntervalMin, async () => {
     if (_modeChanging || _healthCheckBusy) return;
     _healthCheckBusy = true;
@@ -959,7 +980,7 @@ Summarize the current portfolio health, total fees earned, and performance of al
     }
   }, 30_000);
 
-  _cronTasks = [mgmtTask, screenTask, healthTask, briefingTask, briefingWatchdog];
+  _cronTasks = [mgmtTask, screenTask, jevTask, healthTask, briefingTask, briefingWatchdog];
   // Store interval ref so stopCronJobs can clear it
   _cronTasks._pnlPollInterval = pnlPollInterval;
   log("cron", `Cycles started — management every ${config.schedule.managementIntervalMin}m, screening every ${config.schedule.screeningIntervalMin}m`);
