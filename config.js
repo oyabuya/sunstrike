@@ -47,7 +47,7 @@ export const config = {
   screening: {
     minFeeActiveTvlRatio: u.minFeeActiveTvlRatio ?? 0.02,
     minTvl:            u.minTvl            ?? 10_000,
-    maxTvl:            u.maxTvl            ?? 150_000,
+    maxTvl:            u.maxTvl            ?? 500_000,
     minVolume:         u.minVolume         ?? 500,
     minOrganic:        Math.max(80, Number(u.minOrganic) || 80),
     minHolders:        u.minHolders        ?? 500,

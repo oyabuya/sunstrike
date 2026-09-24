@@ -458,7 +458,7 @@ All fields are optional — defaults shown. Edit `user-config.json`.
 |---|---|---|
 | `minFeeActiveTvlRatio` | `0.02` | Minimum fee/active-TVL ratio |
 | `minTvl` | `10000` | Minimum pool TVL (USD) |
-| `maxTvl` | `150000` | Maximum pool TVL (USD) |
+| `maxTvl` | `500000` | Maximum pool TVL (USD); higher TVL widens discovery, while fee and risk gates still apply |
 | `minVolume` | `500` | Minimum pool volume |
 | `minOrganic` | `80` | Minimum Jupiter Organic Score (0–100) |
 | `minHolders` | `500` | Minimum token holder count |
