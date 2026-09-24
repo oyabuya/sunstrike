@@ -658,7 +658,7 @@ The authors are not responsible for any losses incurred through use of this soft
 The operator chat has a collapsible reply keyboard: tap the four-square icon
 inside the message field to open its two-column shortcut panel. `/start` or
 `/help` shows usage and restores the keyboard. The slash command menu also works.
-`/status` and `/check` read the current mode, wallet and positions; `/candidates`,
+`/status` and `/check` read the current mode, positions, and every positive wallet token balance reported by Helius (paginated for Telegram); `/candidates`,
 `/candidat`, and `/refresh` refresh the candidate list without deploying.
 `/positions` lists positions, `/thresholds` shows screening limits, and `/briefing`
 shows the daily report. `/evolve` can change learned screening thresholds after

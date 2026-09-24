@@ -90,9 +90,9 @@ export async function getWalletBalances() {
     // ─── Map all tokens ───────────────────────────────────────
     const enrichedTokens = balances.map(b => ({
       mint: b.mint,
-      symbol: b.symbol || b.mint.slice(0, 8),
+      symbol: b.symbol || (b.mint === "So11111111111111111111111111111111111111111" || b.mint === config.tokens.SOL ? "SOL" : b.mint.slice(0, 8)),
       balance: b.balance,
-      usd: b.usdValue ? Math.round(b.usdValue * 100) / 100 : null,
+      usd: b.usdValue != null ? Math.round(b.usdValue * 100) / 100 : null,
     }));
 
     return {

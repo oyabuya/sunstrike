@@ -17,6 +17,7 @@ import { evolveThresholds, getCampaignPerformance, getPerformanceSummary } from 
 import { registerCronRestarter, executeTool } from "./tools/executor.js";
 import { startPolling, stopPolling, sendMessage, sendHTML, notifyOutOfRange, isEnabled as telegramEnabled, createLiveMessage } from "./telegram.js";
 import { parseTelegramCommand, telegramHelp, telegramReplyKeyboard } from "./telegram-commands.js";
+import { formatWalletTokenMessages } from "./telegram-wallet-view.js";
 import { generateBriefing } from "./briefing.js";
 import { getLastBriefingDate, setLastBriefingDate, getTrackedPosition, setPositionInstruction, updatePnlAndCheckExits, queuePeakConfirmation, resolvePendingPeak, queueTrailingDropConfirmation, resolvePendingTrailingDrop } from "./state.js";
 import { getActiveStrategy } from "./strategy-library.js";
@@ -1067,10 +1068,10 @@ async function telegramHandler(msg) {
       if (wallet?.error || snapshot?.error) throw new Error(wallet?.error || snapshot?.error);
       const lines = snapshot.positions.map((p, i) => `${i + 1}. ${p.pair}: ${p.in_range ? "IN" : "OOR"}, fee ${p.unclaimed_fees_usd ?? "?"}${config.management.solMode ? " SOL" : " USD"}`);
       await sendMessage(`☀️ Sunstrike · ${process.env.DRY_RUN === "true" ? "DRY_RUN" : "LIVE"}\n` +
-        `Saldo: ${wallet.sol} SOL ($${wallet.sol_usd ?? "?"})\n` +
         `Posisi: ${snapshot.total_positions}/${config.risk.maxPositions}\n` +
         `${lines.length ? lines.join("\n") : "Belum ada posisi terbuka."}\n` +
         `Siklus berikut: manajemen ${formatCountdown(nextRunIn(timers.managementLastRun, config.schedule.managementIntervalMin))}, screening ${formatCountdown(nextRunIn(timers.screeningLastRun, config.schedule.screeningIntervalMin))}.`);
+      for (const page of formatWalletTokenMessages(wallet)) await sendMessage(page);
     });
     return;
   }

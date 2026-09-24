@@ -17,6 +17,7 @@ test('Helius native SOL sentinel resolves amount and price without trusting symb
     assert.equal(b.sol, 1);
     assert.equal(b.sol_price, 100);
     assert.equal(b.usdc, 0);
+    assert.equal(b.tokens[1].usd, 0);
     globalThis.fetch = async () => ({ ok: true, json: async () => ({ totalUsdValue: 0 }) });
     assert.match((await getWalletBalances()).error, /missing or invalid/);
   } finally { globalThis.fetch = original; }
