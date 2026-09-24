@@ -1121,11 +1121,16 @@ async function telegramHandler(msg) {
   if (["candidates", "refresh"].includes(command?.name) && !command.args) {
     await runTelegramShortcut(async () => {
       await sendMessage("🔎 Memperbarui kandidat LP (baca-saja)...");
-      const result = await getTopCandidates({ limit: 5 });
-      const lines = result.candidates.map((p, i) => `${i + 1}. ${p.name} | umur ${p.token_age_hours ?? "?"}j | Jupiter ${p.token_info?.organic_score ?? "?"} | vol $${p.volume_window ?? "?"} | fee/TVL ${p.fee_active_tvl_ratio ?? "?"}%`);
-      await sendMessage(`Kandidat: ${result.total_eligible} lolos dari ${result.total_screened} pool.\n` +
-        `${lines.length ? lines.join("\n") : "Tidak ada kandidat lolos saat ini."}\n` +
-        `Ini daftar baca-saja. Tidak ada deploy. Screening otomatis tetap sesuai jadwal.`);
+      const result = await getTopCandidates({ limit: 50 });
+      const lines = result.candidates.slice(0, 5).map((p, i) => `${i + 1}. ${p.name} (${p.pool?.slice(0, 8)}…) | umur ${p.token_age_hours ?? "?"}j | Jupiter ${p.token_info?.organic_score ?? "?"} | vol $${p.volume_window ?? "?"} | fee/TVL ${p.fee_active_tvl_ratio ?? "?"}%`);
+      await sendMessage(`Kandidat: ${result.total_eligible} lolos dari ${result.total_screened} pool unik yang ditemukan setelah filter API. Scan 5m/30m/1h/2h, maksimum 50 pool unik; angka ${result.total_screened} bukan batas scan.\n` +
+        `${lines.length ? lines.join("\n") : "Tidak ada kandidat lolos saat ini."}${result.total_eligible > 5 ? `\n${result.total_eligible - 5} kandidat lain tercatat di action log.` : ""}\n` +
+        `Ini daftar baca-saja. Tidak ada deploy.`);
+      const rejected = result.rejected || [];
+      for (let i = 0; i < rejected.length; i += 10) {
+        const details = rejected.slice(i, i + 10).map((p, j) => `${i + j + 1}. ${String(p.name || "?").slice(0, 35)} (${p.pool?.slice(0, 8) || "?"}…): ${String(p.reason || "alasan tidak tersedia").slice(0, 140)}`);
+        await sendMessage(`Ditolak (${i + 1}–${Math.min(i + 10, rejected.length)} dari ${rejected.length}):\n${details.join("\n")}`);
+      }
     });
     return;
   }

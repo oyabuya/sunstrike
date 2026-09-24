@@ -158,6 +158,8 @@ To review a screening cycle, filter `logs/actions-*.jsonl` by `args.cycle_id` (`
 
 When both position slots are occupied in `DRY_RUN`, screening still records the preliminary funnel under the same cycle ID. It logs `position_limit_observation` and makes no Jev/Luna call or deploy attempt. Live mode keeps the position-limit skip.
 
+Telegram `/candidates` shows up to five eligible pools plus every rejection recorded by the screening funnel and its reason, in separate messages. “Screened pools” means unique pools returned after the upstream API and initial blacklist/quote filters across the configured activity windows; it is not a fixed scan quota. Discovery reads up to 50 pools per window and enriches at most 50 unique pools per request.
+
 Copy config and edit as needed:
 
 ```bash
