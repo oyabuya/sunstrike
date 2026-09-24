@@ -6,7 +6,8 @@
 - Preferensi entry terbaru: umur token minimum 12 jam, tanpa batas maksimum; Jupiter Organic Score minimum 80 yang dibaca ulang saat preflight. Data hilang berarti skip.
 - Hold posisi yang masih dalam range dan menghasilkan fee meski nilai awal 0,2 SOL turun ke 0,1 SOL. Tidak ada take profit atau stop loss persentase otomatis. Tutup segera saat OOR atas atau audit token terbaru menunjukkan risiko rug tegas, termasuk ketika masih dalam range.
 - OOR bawah ditinjau setelah empat jam. Close hanya jika volume dan fee sama-sama melemah berat, atau tekanan jual token disertai tren volume turun dan fee lemah. Sinyal tidak lengkap berarti hold dan audit ulang. Aturan tidak menjamin batas rugi 0,1 SOL; rug dapat menghabiskan posisi.
-- Patch lokal menambah gate aktivitas 5m+1h di screening dan preflight, skenario fee bersih sebagai ranking advisory, log funnel/keputusan, serta monitor token dan exit 30 detik. Belum dideploy ke VPS atau diuji terhadap PnL nyata; pertahankan `DRY_RUN=true` sampai validasi operasional.
+- Patch `b9b9a96` menambah gate aktivitas 5m+1h di screening dan preflight, skenario fee bersih sebagai ranking advisory, log funnel/keputusan, serta monitor token dan exit 30 detik. Semua 19 suite tes lulus; belum ada bukti peningkatan PnL nyata.
+- Commit di-push ke `origin/main` dan di-fast-forward ke VPS. `user-config.json` VPS diselaraskan: maksimum dua posisi, 0,2 SOL, umur minimum 12 jam, Jupiter Score minimum 80, tanpa umur maksimum atau trailing take profit. Hanya `sunstrike.service` direstart; service active, `DRY_RUN=true`. Sampel log awal menunjukkan screening berjalan; belum ada transaksi baru.
 
 Terakhir diperbarui: **2026-09-24 WIB**. Baca `AGENTS.md`, dokumen ini, `RESTART_AUDIT_2026-09-23.md`, dan `STRATEGY_REVIEW_2026-09-24.md` sebelum melanjutkan.
 
