@@ -156,6 +156,8 @@ Optional Jev market advice: set `JEV_SHADOW_ENABLED=true` in `.env` while `DRY_R
 
 To review a screening cycle, filter `logs/actions-*.jsonl` by `args.cycle_id` (`screen-<timestamp>`). `screening_funnel` records local filter rejections; `screening_candidates` records the full local rejection list and final shortlist with comparable 5m metrics; `jev_shadow` records scored pools or an error; `screening_decision` records Jev scores, Luna's report, and actual `deploy_position` attempts. `no_deploy_selected` means Luna made no deploy call, while `deploy_tool_failed` means an attempted call did not succeed. Pools excluded by the upstream discovery API are only counted in discovery totals, so their individual rejection reasons are unavailable. These logs show decisions, not realized LP returns.
 
+When both position slots are occupied in `DRY_RUN`, screening still records the preliminary funnel under the same cycle ID. It logs `position_limit_observation` and makes no Jev/Luna call or deploy attempt. Live mode keeps the position-limit skip.
+
 Copy config and edit as needed:
 
 ```bash

@@ -434,6 +434,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
   }
   _screeningBusy = true; // set immediately — prevents TOCTOU race with concurrent callers
   _screeningLastTriggered = Date.now();
+  const shadowCycleId = `screen-${Date.now()}`;
 
   // Hard guards — don't even run the agent if preconditions aren't met
   let prePositions, preBalance;
@@ -461,8 +462,18 @@ export async function runScreeningCycle({ silent = false } = {}) {
     }
     if (prePositions.total_positions >= config.risk.maxPositions) {
       log("cron", `Screening skipped — max positions reached (${prePositions.total_positions}/${config.risk.maxPositions})`);
-      if (process.env.JEV_SHADOW_ENABLED === "true") log("screening", "Jev shadow skipped — position limit reached");
-      screenReport = `Screening skipped — max positions reached (${prePositions.total_positions}/${config.risk.maxPositions}).`;
+      if (isDryRun) {
+        const observed = await getTopCandidates({ limit: 10, cycleId: shadowCycleId });
+        logAction({ tool: "screening_decision", args: { cycle_id: shadowCycleId }, result: {
+          candidates: observed.candidates.map((pool) => ({ pool_address: pool.pool, score: pool.candidate_score })),
+          choices: [], no_deploy: true, jev_status: "skipped_position_limit", luna_model: null,
+          decision_status: "position_limit_observation",
+        }, success: true });
+        screenReport = `Screening observation: ${observed.total_eligible} preliminary candidate(s) from ${observed.total_screened} pools; deploy skipped — max positions reached (${prePositions.total_positions}/${config.risk.maxPositions}).`;
+      } else {
+        if (process.env.JEV_SHADOW_ENABLED === "true") log("screening", "Jev shadow skipped — position limit reached");
+        screenReport = `Screening skipped — max positions reached (${prePositions.total_positions}/${config.risk.maxPositions}).`;
+      }
       _screeningBusy = false;
       return screenReport;
     }
@@ -491,7 +502,6 @@ export async function runScreeningCycle({ silent = false } = {}) {
   }
   timers.screeningLastRun = Date.now();
   log("cron", `Starting screening cycle [model: ${config.llm.screeningModel}]`);
-  const shadowCycleId = `screen-${Date.now()}`;
   try {
     // Reuse pre-fetched balance — no extra RPC call needed
     const currentBalance = preBalance;
