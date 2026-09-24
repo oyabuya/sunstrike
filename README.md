@@ -454,21 +454,21 @@ All fields are optional — defaults shown. Edit `user-config.json`.
 
 | Field | Default | Description |
 |---|---|---|
-| `minFeeActiveTvlRatio` | `0.05` | Minimum fee/active-TVL ratio |
+| `minFeeActiveTvlRatio` | `0.02` | Minimum fee/active-TVL ratio |
 | `minTvl` | `10000` | Minimum pool TVL (USD) |
 | `maxTvl` | `150000` | Maximum pool TVL (USD) |
 | `minVolume` | `500` | Minimum pool volume |
 | `minOrganic` | `60` | Minimum organic score (0–100) |
 | `minHolders` | `500` | Minimum token holder count |
-| `minMcap` | `150000` | Minimum market cap (USD) |
-| `maxMcap` | `10000000` | Maximum market cap (USD) |
-| `minBinStep` | `80` | Minimum bin step |
-| `maxBinStep` | `125` | Maximum bin step |
+| `minMcap` | `250000` | Minimum market cap (USD) |
+| `maxMcap` | `20000000` | Maximum market cap (USD) |
+| `minBinStep` | `50` | Minimum bin step |
+| `maxBinStep` | `150` | Maximum bin step |
 | `timeframe` | `5m` | Default multi-window discovery profile; other configured values query only that window |
 | `category` | `trending` | Pool category filter |
-| `minTokenFeesSol` | `30` | Minimum all-time fees in SOL |
-| `maxBundlersPct` | `30` | Maximum bundler % in top 100 holders |
-| `maxTop10Pct` | `60` | Maximum top-10 holder concentration |
+| `minTokenFeesSol` | `50` | Minimum all-time fees in SOL |
+| `maxBundlePct` | `60` | Maximum bundle holding % |
+| `maxTop10Pct` | `30` | Maximum top-10 holder concentration |
 | `blockedLaunchpads` | `[]` | Launchpad names to never deploy into |
 
 ### Management

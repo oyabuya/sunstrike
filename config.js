@@ -46,16 +46,16 @@ export const config = {
 
   // ─── Pool Screening Thresholds ───────────
   screening: {
-    minFeeActiveTvlRatio: u.minFeeActiveTvlRatio ?? 0.05,
+    minFeeActiveTvlRatio: u.minFeeActiveTvlRatio ?? 0.02,
     minTvl:            u.minTvl            ?? 10_000,
     maxTvl:            u.maxTvl            ?? 150_000,
-    minVolume:         u.minVolume         ?? 1000, // EvilPanda: $1M 24h vol minimum
+    minVolume:         u.minVolume         ?? 500,
     minOrganic:        u.minOrganic        ?? 60,
     minHolders:        u.minHolders        ?? 500,
     minMcap:           u.minMcap           ?? 250_000, // EvilPanda: $250k MC minimum
-    maxMcap:           u.maxMcap           ?? 10_000_000,
-    minBinStep:        u.minBinStep        ?? 80,
-    maxBinStep:        u.maxBinStep        ?? 125,
+    maxMcap:           u.maxMcap           ?? 20_000_000,
+    minBinStep:        u.minBinStep        ?? 50,
+    maxBinStep:        u.maxBinStep        ?? 150,
     timeframe:         u.timeframe         ?? "5m",
     category:          u.category          ?? "trending",
     minTokenFeesSol:   u.minTokenFeesSol   ?? 50,  // global fees paid (priority+jito tips). below = bundled/scam
@@ -68,10 +68,10 @@ export const config = {
     antiRugStrict:     u.antiRugStrict     ?? true, // enable strict anti-rug hard gates in screening + executor
     blockedLaunchpads:  u.blockedLaunchpads  ?? [],  // e.g. ["letsbonk.fun", "pump.fun"]
  minTokenAgeHours: u.minTokenAgeHours ?? 12, // skip tokens < 12h old (evolved: was 2h — too young, dump-prone)
-    maxTokenAgeHours: u.maxTokenAgeHours ?? 72, // skip tokens > 72h (momentum mungkin sudah lewat)
+    maxTokenAgeHours: u.maxTokenAgeHours ?? null, // no upper age limit; minimum age still applies
     athFilterPct: u.athFilterPct ?? -15, // skip jika harga > 85% dari ATH (evolved: was -20 — stricter, avoid ATH dumps)
     maxVolatility: u.maxVolatility ?? 4.0, // max pool volatility score (evolved: was 5 — mid-vol 2-4 often fakeout)
-    minVolChangePct: u.minVolChangePct ?? 20, // NEW: volume 1h harus >20% vs 24h avg sebelum deploy
+    minVolChangePct: u.minVolChangePct ?? 0, // flag falling volume; severe declines remain filtered
   },
 
   // ─── Position Management ────────────────
