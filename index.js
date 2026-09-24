@@ -16,7 +16,7 @@ import { config, reloadScreeningThresholds, computeDeployAmount } from "./config
 import { evolveThresholds, getCampaignPerformance, getPerformanceSummary } from "./lessons.js";
 import { registerCronRestarter, executeTool } from "./tools/executor.js";
 import { startPolling, stopPolling, sendMessage, sendHTML, notifyOutOfRange, isEnabled as telegramEnabled, createLiveMessage } from "./telegram.js";
-import { parseTelegramCommand, telegramHelp } from "./telegram-commands.js";
+import { parseTelegramCommand, telegramHelp, telegramReplyKeyboard } from "./telegram-commands.js";
 import { generateBriefing } from "./briefing.js";
 import { getLastBriefingDate, setLastBriefingDate, getTrackedPosition, setPositionInstruction, updatePnlAndCheckExits, queuePeakConfirmation, resolvePendingPeak, queueTrailingDropConfirmation, resolvePendingTrailingDrop } from "./state.js";
 import { getActiveStrategy } from "./strategy-library.js";
@@ -1025,7 +1025,7 @@ async function telegramHandler(msg) {
   const command = parseTelegramCommand(text);
   const shortcutText = command ? `/${command.name}${command.args ? ` ${command.args}` : ""}` : text;
   if (command?.name === "help" && !command.args) {
-    await sendMessage(telegramHelp(process.env.DRY_RUN === "true" ? "DRY_RUN" : "LIVE"));
+    await sendMessage(telegramHelp(process.env.DRY_RUN === "true" ? "DRY_RUN" : "LIVE"), { reply_markup: telegramReplyKeyboard() });
     return;
   }
   if (["live", "dry_run", "mode"].includes(command?.name) && !command.args) {

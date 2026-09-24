@@ -15,16 +15,35 @@ export const TELEGRAM_COMMANDS = [
 ];
 
 const ALIASES = { start: "help", menu: "help", candidat: "candidates" };
+const KEYBOARD_ROWS = [
+  [["📊 Status", "status"], ["🔎 Kandidat", "candidates"]],
+  [["🔄 Refresh", "refresh"], ["🩺 Cek Bot", "check"]],
+  [["📈 Posisi", "positions"], ["📰 Briefing", "briefing"]],
+  [["⚙️ Ambang", "thresholds"], ["🧠 Evolve", "evolve"]],
+  [["🧪 Mode", "mode"], ["❔ Bantuan", "help"]],
+];
+const KEYBOARD_COMMANDS = new Map(KEYBOARD_ROWS.flat().map(([label, command]) => [label, command]));
+
+export function telegramReplyKeyboard() {
+  return {
+    keyboard: KEYBOARD_ROWS.map((row) => row.map(([text]) => ({ text }))),
+    resize_keyboard: true,
+    input_field_placeholder: "Pilih menu atau tulis pesan",
+  };
+}
 
 export function parseTelegramCommand(text) {
-  const match = String(text || "").trim().match(/^\/([a-z][a-z0-9_]*)(?:@[A-Za-z0-9_]+)?(?:\s+(.*))?$/i);
+  const trimmed = String(text || "").trim();
+  const keyboardCommand = KEYBOARD_COMMANDS.get(trimmed);
+  if (keyboardCommand) return { name: keyboardCommand, args: "" };
+  const match = trimmed.match(/^\/([a-z][a-z0-9_]*)(?:@[A-Za-z0-9_]+)?(?:\s+(.*))?$/i);
   if (!match) return null;
   const name = match[1].toLowerCase();
   return { name: ALIASES[name] || name, args: match[2]?.trim() || "" };
 }
 
 export function telegramHelp(mode) {
-  return `☀️ Sunstrike · ${mode}\n\n` +
+  return `☀️ Sunstrike · ${mode}\nKetuk ikon empat kotak di kolom pesan untuk membuka menu.\n\n` +
     `/status — saldo, mode, dan posisi\n` +
     `/candidates atau /refresh — kandidat terbaru (baca-saja, tidak deploy)\n` +
     `/check — kondisi bot dan posisi (baca-saja)\n` +

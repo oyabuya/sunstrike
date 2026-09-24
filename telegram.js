@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { log } from "./logger.js";
-import { TELEGRAM_COMMANDS } from "./telegram-commands.js";
+import { TELEGRAM_COMMANDS, telegramReplyKeyboard } from "./telegram-commands.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const USER_CONFIG_PATH = path.join(__dirname, "user-config.json");
@@ -103,9 +103,9 @@ async function postTelegram(method, body) {
   }
 }
 
-export async function sendMessage(text) {
+export async function sendMessage(text, options = {}) {
   if (!TOKEN || !chatId) return;
-  return postTelegram("sendMessage", { text: String(text).slice(0, 4096) });
+  return postTelegram("sendMessage", { text: String(text).slice(0, 4096), ...options });
 }
 
 export async function sendHTML(html) {
@@ -360,7 +360,8 @@ export function startPolling(onMessage) {
   poll(onMessage); // fire-and-forget
   log("telegram", "Bot polling started");
   if (chatId) {
-    sendMessage(`☀️ Sunstrike siap · ${process.env.DRY_RUN === "true" ? "DRY_RUN" : "LIVE"}. Buka menu perintah atau kirim /help. /check untuk status terbaru.`)
+    sendMessage(`☀️ Sunstrike siap · ${process.env.DRY_RUN === "true" ? "DRY_RUN" : "LIVE"}. Ketuk ikon empat kotak di kolom pesan untuk membuka menu, atau kirim /help.`, { reply_markup: telegramReplyKeyboard() })
+      .then((result) => { if (result?.ok) log("telegram", "Ready message with reply keyboard delivered"); })
       .catch((error) => log("telegram_error", `Ready message failed: ${error.message}`));
   }
 }

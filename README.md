@@ -655,7 +655,9 @@ The authors are not responsible for any losses incurred through use of this soft
 
 ### Telegram runtime mode
 
-The operator chat has a Telegram command menu. `/start` or `/help` shows usage.
+The operator chat has a collapsible reply keyboard: tap the four-square icon
+inside the message field to open its two-column shortcut panel. `/start` or
+`/help` shows usage and restores the keyboard. The slash command menu also works.
 `/status` and `/check` read the current mode, wallet and positions; `/candidates`,
 `/candidat`, and `/refresh` refresh the candidate list without deploying.
 `/positions` lists positions, `/thresholds` shows screening limits, and `/briefing`
