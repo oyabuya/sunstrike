@@ -31,8 +31,8 @@ Use this as the primary tool for finding new LP opportunities.`,
           },
           timeframe: {
             type: "string",
-            enum: ["1h", "4h", "12h", "24h"],
-            description: "Timeframe for metrics. Use 24h for general screening, 1h for momentum."
+            enum: ["5m", "30m", "1h", "2h", "4h", "12h", "24h"],
+            description: "Meteora Pool Discovery activity window; 15m is not supported."
           },
           category: {
             type: "string",

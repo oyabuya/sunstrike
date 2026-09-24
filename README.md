@@ -29,11 +29,10 @@ Sunstrike runs continuous screening and management cycles, deploying capital int
 - **Telegram chat** — full agent chat via Telegram, plus cycle reports and OOR alerts
 - **Claude Code integration** — run AI-powered screening and management directly from your terminal using Claude Code slash commands
 
-If the default 5m discovery window finds no pools, screening retries with a 2h
-activity window using the same token age, market cap, holder, and safety limits.
-The returned profile identifies the fallback; final Jupiter audit and deploy
-preflight still apply. This admits pools with sustained 2h activity even when
-their latest 5m volume is below the 5m threshold.
+With the default 5m setting, screening samples Meteora Pool Discovery at 5m,
+30m, 1h, and 2h, then deduplicates pools and applies the same risk gates.
+The API rejects 15m for discovery; the candidate records which supported window
+supplied its activity metrics. Final Jupiter audit and deploy preflight still apply.
 Every candidate is also checked against the Solana RPC for an existing account
 owned by the Meteora DLMM program before it is shown to the agent.
 During an automated screening cycle, `deploy_position` accepts only an exact
@@ -465,7 +464,7 @@ All fields are optional — defaults shown. Edit `user-config.json`.
 | `maxMcap` | `10000000` | Maximum market cap (USD) |
 | `minBinStep` | `80` | Minimum bin step |
 | `maxBinStep` | `125` | Maximum bin step |
-| `timeframe` | `5m` | Candle timeframe for screening |
+| `timeframe` | `5m` | Default multi-window discovery profile; other configured values query only that window |
 | `category` | `trending` | Pool category filter |
 | `minTokenFeesSol` | `30` | Minimum all-time fees in SOL |
 | `maxBundlersPct` | `30` | Maximum bundler % in top 100 holders |

@@ -238,9 +238,12 @@ export async function runManagementCycle({ silent = false } = {}) {
     positions = livePositions?.positions || [];
 
     if (positions.length === 0) {
-      log("cron", "No open positions — triggering screening cycle");
-      mgmtReport = "No open positions. Triggering screening cycle.";
-      runScreeningCycle().catch((e) => log("cron_error", `Triggered screening failed: ${e.message}`));
+      const screenDue = Date.now() - _screeningLastTriggered >= config.schedule.screeningIntervalMin * 60_000;
+      mgmtReport = screenDue ? "No open positions. Triggering screening cycle." : "No open positions. Screening is on schedule.";
+      if (screenDue) {
+        log("cron", "No open positions — triggering due screening cycle");
+        runScreeningCycle().catch((e) => log("cron_error", `Triggered screening failed: ${e.message}`));
+      }
       return mgmtReport;
     }
 
@@ -711,7 +714,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
       const block = [
         `POOL: ${pool.name} (${pool.pool})`,
         `  screening_score: ${candidateScore}`,
-        `  metrics: bin_step=${pool.bin_step}, fee_pct=${pool.fee_pct}%, fee_tvl=${pool.fee_active_tvl_ratio}, vol=$${pool.volume_window}, tvl=$${pool.active_tvl}, volatility=${pool.volatility}, mcap=$${pool.mcap}, organic=${pool.organic_score}${pool.token_age_hours != null ? `, age=${pool.token_age_hours}h` : ""}`,
+        `  metrics: timeframe=${pool.discovery_timeframe || config.screening.timeframe}, bin_step=${pool.bin_step}, fee_pct=${pool.fee_pct}%, fee_tvl=${pool.fee_active_tvl_ratio}, vol=$${pool.volume_window}, tvl=$${pool.active_tvl}, volatility=${pool.volatility}, mcap=$${pool.mcap}, organic=${pool.organic_score}${pool.token_age_hours != null ? `, age=${pool.token_age_hours}h` : ""}`,
         `  audit: top10=${top10Pct}%, bots=${botPct}%, fees=${feesSol}SOL${launchpad ? `, launchpad=${launchpad}` : ""}`,
         okxParts ? `  okx: ${okxParts}` : okxUnavailable ? `  okx: unavailable` : null,
         okxTags  ? `  tags: ${okxTags}` : null,
@@ -741,6 +744,7 @@ ${candidateBlocks.join("\n\n")}
 
 STEPS:
 1. Pick the best candidate based on narrative quality, smart wallets, pool metrics, AND vol_trend.
+   - Volume and fee/TVL are measured over each candidate's discovery timeframe; compare momentum with the 1h volume trend, not raw window totals alone.
    - Prefer pools with vol_trend=up or flat over vol_trend=down.
    - A pool with vol_trend=down and trend_pct < -50% is a red flag (momentum over).
 2. Call deploy_position with the exact recommended_deploy values from the chosen pool:
@@ -763,7 +767,7 @@ STEPS:
 
    MARKET
    Fee/TVL: <x>%
-   Volume: $<x>
+   Volume: $<x> (<discovery timeframe>)
    TVL: $<x>
    Volatility: <x>
    Organic: <x>

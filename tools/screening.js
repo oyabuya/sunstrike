@@ -308,21 +308,40 @@ export async function discoverPools({
 export async function getTopCandidates({ limit = 10 } = {}) {
   const { config } = await import("../config.js");
   const s = config.screening;
-  let discovery = await discoverPools({ page_size: 50 });
-  // A five-minute volume window can be empty even while an established pool
-  // has sustained activity. Broaden the observation window, not the risk caps.
-  let screeningProfile = "strict";
-  if (discovery.pools.length === 0 && s.timeframe === "5m") {
-    const fallback = await discoverPools({ page_size: 50, overrides: { timeframe: "2h" } }).catch((error) => {
-      log("screening", `2h discovery fallback unavailable: ${error.message}`);
-      return null;
-    });
-    if (fallback) {
-      discovery = fallback;
-      screeningProfile = "2h activity fallback";
-      log("screening", `5m discovery empty; 2h activity window found ${fallback.pools.length} pool(s)`);
+  // Discovery supports 5m, 30m, 1h, 2h (but rejects 15m). Sample each
+  // window so one nonempty 5m result does not hide stronger sustained pools.
+  const timeframes = s.timeframe === "5m" ? ["5m", "30m", "1h", "2h"] : [s.timeframe];
+  const results = await Promise.allSettled(timeframes.map((timeframe) =>
+    discoverPools({ page_size: 50, overrides: { timeframe } })
+  ));
+  const successful = results.flatMap((result, i) => {
+    if (result.status === "fulfilled") return [{ timeframe: timeframes[i], ...result.value }];
+    log("screening", `${timeframes[i]} discovery unavailable: ${result.reason.message}`);
+    return [];
+  });
+  if (!successful.length) throw new Error("Pool Discovery unavailable across all configured timeframes");
+  const poolsByAddress = new Map();
+  // Round-robin keeps the existing 50-pool enrichment bound while giving
+  // every activity window a chance to contribute candidates.
+  for (let i = 0; i < 50 && poolsByAddress.size < 50; i++) {
+    for (const result of successful) {
+      const pool = result.pools[i];
+      if (!pool) continue;
+      const existing = poolsByAddress.get(pool.pool);
+      if (existing) existing.discovery_timeframes.push(result.timeframe);
+      else if (poolsByAddress.size < 50) poolsByAddress.set(pool.pool, {
+        ...pool, discovery_timeframe: result.timeframe,
+        discovery_timeframes: [result.timeframe],
+      });
     }
   }
+  const discovery = {
+    pools: [...poolsByAddress.values()],
+    total: successful.reduce((sum, result) => sum + (Number(result.total) || 0), 0),
+    api_returned: successful.reduce((sum, result) => sum + (Number(result.api_returned) || 0), 0),
+  };
+  const screeningProfile = successful.map((result) => result.timeframe).join("+");
+  log("screening", `Discovery ${screeningProfile}: ${discovery.pools.length} unique pools`);
   const { pools } = discovery;
   const filteredOut = [];
   let totalScreened = pools.length;
@@ -717,7 +736,7 @@ return true;
       if (smartMoneyPools.length > 0) {
         const { autoDiscoverSmartWallets } = await import("../smart-wallets.js");
         Promise.allSettled(
-          smartMoneyPools.map(p =>
+          smartMoneyPools.slice(0, 1).map(p =>
             autoDiscoverSmartWallets(p.pool, p.name, p.base?.mint)
               .then(r => { if (r.added > 0) log("smart_wallets", `Screening discovery (${r.source}): +${r.added} wallet(s) from ${p.name}`); })
           )
