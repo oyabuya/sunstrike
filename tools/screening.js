@@ -306,7 +306,7 @@ export async function discoverPools({
  * Returns eligible pools for the agent to evaluate and pick from.
  * Hard filters applied in code, agent decides which to deploy into.
  */
-export async function getTopCandidates({ limit = 10 } = {}) {
+export async function getTopCandidates({ limit = 10, cycleId = null } = {}) {
   const { config } = await import("../config.js");
   const s = config.screening;
   // Discovery supports 5m, 30m, 1h, 2h (but rejects 15m). Sample each
@@ -782,7 +782,7 @@ return true;
     .sort((a, b) => (b.candidate_score ?? 0) - (a.candidate_score ?? 0))
     .slice(0, limit);
 
-  logAction({ tool: "screening_funnel", args: { profile: screeningProfile }, result: {
+  logAction({ tool: "screening_funnel", args: { profile: screeningProfile, cycle_id: cycleId }, result: {
     discovered: totalScreened,
     eligible: eligible.map((p) => ({ pool_address: p.pool, score: p.candidate_score })),
     rejected: filteredOut.map(({ name, pool, mint, reason }) => ({ name, pool, mint, reason })),
@@ -794,6 +794,7 @@ return true;
     total_screened: totalScreened,
     discovery: { api_matches: discovery.total, api_returned: discovery.api_returned, local_passed: onchainPools.length },
     filtered_examples: filteredOut.slice(0, 3),
+    rejected: filteredOut,
     screening_profile: screeningProfile,
   };
 }

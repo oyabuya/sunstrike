@@ -1,5 +1,9 @@
 # Sunstrike — handoff
 
+## Pembaruan 25 September 2026
+
+- Permintaan observabilitas screening: action log per `cycle_id` kini menghubungkan `screening_funnel`, `screening_candidates`, `jev_shadow`, dan `screening_decision`. Shortlist memuat metrik 5m, audit, skor, dan skenario fee; penolakan lokal memuat pool/mint/alasan; keputusan mencatat status Jev, skor Jev, laporan Luna, serta percobaan deploy nyata/simulasi. Filter dan otoritas eksekusi tidak berubah. 23 suite tes lokal lulus; belum ada sampel siklus atau hasil PnL pascapatch.
+
 ## Keputusan pemilik terbaru — 24 September 2026
 
 - Permintaan terbaru `/check`: tampilkan seluruh token bersaldo positif pada wallet, bukan hanya SOL. Commit `b0af05c` menambah daftar token dan nilai USD per aset dari snapshot Helius yang sama, nilai USD hilang ditandai jelas, pesan panjang dibagi agar tidak terpotong Telegram. Berlaku juga untuk `/status` karena keduanya memakai handler sama. 22 suite tes lulus; commit di-push dan dideploy ke VPS, hanya `sunstrike.service` direstart. Service active dan `DRY_RUN=true`.

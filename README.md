@@ -154,6 +154,8 @@ For a low-cost model trial, set `managementModel`, `screeningModel`, and `genera
 
 Optional Jev market advice: set `JEV_SHADOW_ENABLED=true` in `.env` while `DRY_RUN=true`. Every 15 minutes Sunstrike samples trending Meteora pools from 5m and 1h windows, even when positions fill the deploy limit, and asks `typesafe/jev-1.13` to score up to five distinct pools. This wider scout is advisory only. During an eligible screening cycle, Jev also scores up to five hard-filtered candidates. Luna receives bounded Jev fee, momentum, and holder-risk scores only for matching eligible pool addresses; it must check the raw metrics and cannot bypass deploy gates. Scores, confidence, served model, API cost, and cycle ID are recorded in `logs/actions-*.jsonl`. Provider failures leave Luna's normal screening path intact. Jev scores are not probabilities of profit and need comparison with later net LP outcomes before any live use.
 
+To review a screening cycle, filter `logs/actions-*.jsonl` by `args.cycle_id` (`screen-<timestamp>`). `screening_funnel` records local filter rejections; `screening_candidates` records the full local rejection list and final shortlist with comparable 5m metrics; `jev_shadow` records scored pools or an error; `screening_decision` records Jev scores, Luna's report, and actual `deploy_position` attempts. `no_deploy_selected` means Luna made no deploy call, while `deploy_tool_failed` means an attempted call did not succeed. Pools excluded by the upstream discovery API are only counted in discovery totals, so their individual rejection reasons are unavailable. These logs show decisions, not realized LP returns.
+
 Copy config and edit as needed:
 
 ```bash

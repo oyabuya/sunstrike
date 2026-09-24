@@ -530,7 +530,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
     }
 
     // Discovery failures are failures, not evidence of an empty market.
-    const topCandidates = await getTopCandidates({ limit: 10 });
+    const topCandidates = await getTopCandidates({ limit: 10, cycleId: shadowCycleId });
     let candidatePools = (topCandidates?.candidates || topCandidates?.pools || []).slice(0, 10);
     let earlyFilteredExamples = topCandidates?.filtered_examples || [];
     let candidateSource = topCandidates?.screening_profile || "strict";
@@ -543,12 +543,12 @@ export async function runScreeningCycle({ silent = false } = {}) {
       const launchpad = ti?.launchpad ?? null;
       if (launchpad && config.screening.allowedLaunchpads?.length > 0 && !config.screening.allowedLaunchpads.includes(launchpad)) {
         log("screening", `Skipping ${pool.name} — launchpad ${launchpad} not in allow-list`);
-        filteredOut.push({ name: pool.name, reason: `launchpad ${launchpad} not in allow-list` });
+        filteredOut.push({ name: pool.name, pool: pool.pool, mint: pool.base?.mint, reason: `launchpad ${launchpad} not in allow-list` });
         return false;
       }
       if (launchpad && config.screening.blockedLaunchpads.includes(launchpad)) {
         log("screening", `Skipping ${pool.name} — blocked launchpad (${launchpad})`);
-        filteredOut.push({ name: pool.name, reason: `blocked launchpad (${launchpad})` });
+        filteredOut.push({ name: pool.name, pool: pool.pool, mint: pool.base?.mint, reason: `blocked launchpad (${launchpad})` });
         return false;
       }
       if (config.screening.antiRugStrict) {
@@ -564,7 +564,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
         });
         if (!risk.pass) {
           log("screening", `Post-recon risk gate: dropped ${pool.name} — ${risk.reason}`);
-          filteredOut.push({ name: pool.name, reason: risk.reason });
+          filteredOut.push({ name: pool.name, pool: pool.pool, mint: pool.base?.mint, reason: risk.reason });
           return false;
         }
         pool.risk_metrics = risk.metrics;
@@ -577,11 +577,33 @@ export async function runScreeningCycle({ silent = false } = {}) {
       return (estimate(b)?.net_before_inventory_usd ?? -Infinity) - (estimate(a)?.net_before_inventory_usd ?? -Infinity);
     });
 
+    logAction({ tool: "screening_candidates", args: { cycle_id: shadowCycleId }, result: {
+      discovery: topCandidates.discovery,
+      profile: candidateSource,
+      rejected: [...(topCandidates.rejected || earlyFilteredExamples), ...filteredOut],
+      shortlisted: passing.map(({ pool, ti }) => ({
+        pool_address: pool.pool,
+        name: pool.name,
+        base_mint: pool.base?.mint ?? null,
+        screening_score: pool.candidate_score ?? null,
+        timeframe: pool.discovery_timeframe ?? null,
+        fee_tvl_5m_pct: activityPerFiveMinutes(pool.fee_active_tvl_ratio, pool.discovery_timeframe),
+        volume_5m_usd: activityPerFiveMinutes(pool.volume_window, pool.discovery_timeframe),
+        active_tvl_usd: pool.active_tvl ?? null,
+        organic_score: ti?.organic_score ?? pool.organic_score ?? null,
+        token_age_hours: pool.token_age_hours ?? null,
+        top10_holders_pct: ti?.audit?.top_holders_pct ?? null,
+        bot_holders_pct: ti?.audit?.bot_holders_pct ?? null,
+        net_scenario: estimateNetFeeScenario({ pool, amountSol: deployAmount, solPrice: currentBalance.sol_price }),
+      })),
+    }, success: true });
+
     if (passing.length === 0) {
       if (process.env.JEV_SHADOW_ENABLED === "true") log("screening", "Jev shadow skipped — no candidates passed screening");
       logAction({ tool: "screening_decision", args: { cycle_id: shadowCycleId }, result: {
-        candidates: [], rejected: [...earlyFilteredExamples, ...filteredOut].slice(0, 10),
-        choices: [], no_deploy: true,
+        candidates: [], choices: [], no_deploy: true,
+        jev_status: "skipped_no_candidates", luna_model: null, luna_report: null,
+        decision_status: "no_eligible_candidates",
       }, success: true });
       const combined = filteredOut.length > 0 ? filteredOut : earlyFilteredExamples;
       const combinedExamples = combined.slice(0, 3)
@@ -779,13 +801,23 @@ IMPORTANT:
           net_scenario: estimateNetFeeScenario({ pool, amountSol: deployAmount, solPrice: currentBalance.sol_price }),
         })),
         scored_addresses: shadowScores?.map((score) => score.pool_address) ?? [],
+        jev_scores: shadowScores ?? [],
+        jev_status: shadowScores ? "scored" : process.env.DRY_RUN !== "true" ? "disabled_live" :
+          process.env.JEV_SHADOW_ENABLED !== "true" ? "disabled" :
+          !process.env.OPENROUTER_API_KEY ? "missing_provider_key" : "failed",
         choices: shadowChoices,
         no_deploy: shadowChoices.length === 0,
+        luna_model: config.llm.screeningModel,
+        luna_report: stripThink(screenReport),
+        decision_status: shadowChoices.some((choice) => choice.success) ? "deploy_tool_succeeded" : shadowChoices.length ? "deploy_tool_failed" : "no_deploy_selected",
       }, success: true });
     }
   } catch (error) {
     log("cron_error", `Screening cycle failed: ${error.message}`);
     screenReport = `Screening cycle failed: ${error.message}`;
+    logAction({ tool: "screening_decision", args: { cycle_id: shadowCycleId }, result: {
+      decision_status: "cycle_error", error: error.message, no_deploy: true,
+    }, success: false });
   } finally {
     _screeningBusy = false;
     if (!silent && telegramEnabled()) {
