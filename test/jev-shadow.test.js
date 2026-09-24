@@ -15,6 +15,8 @@ test("Jev receives only bounded candidate metrics and separate score questions",
   assert.equal(Object.keys(request.questions).length, 15);
   assert.equal(request.state.pools[0].candidate_score, 42);
   assert.equal(request.state.pools[0].volume_trend_pct, 20);
+  assert.equal(request.state.pools[0].volume_5m_avg_usd, 200000);
+  assert.equal(request.state.pools[0].fee_active_tvl_ratio_5m_avg, 0.1);
   assert.equal(request.state.pools[0].narrative, undefined);
 });
 

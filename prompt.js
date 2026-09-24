@@ -124,11 +124,11 @@ RISK SIGNALS (ranking only; hard rules above are enforced in code):
 - bundle_pct / gmgn_bundler_pct < 45%      → ✅ GREEN (acceptable, organic holders dominate)
 - bundle_pct / gmgn_bundler_pct 45–${riskLimits.bundler}% → 🟡 YELLOW (aggregate/market maker; no override past the configured cap)
 - rugpull or wash trading flag from OKX → disqualifying; no override
-- no narrative + no smart wallets → skip
+- no narrative + no smart wallets → lower confidence; require clear fee activity, organic flow, and favorable current trend before entry
 - gmgn_kol_count ≥ 1 → bullish signal (KOL holding = higher conviction)
 - gmgn_smart_wallets ≥ 3 → strong bullish signal
 
-NARRATIVE QUALITY (your main judgment call):
+NARRATIVE QUALITY (supporting evidence; prioritize net fee opportunity and current activity):
 - GOOD: specific origin — real event, viral moment, named entity, active community
 - BAD: generic hype ("next 100x", "community token") with no identifiable subject
 - Smart wallets present → can improve confidence when every hard risk gate passes

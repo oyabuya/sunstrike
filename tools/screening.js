@@ -3,7 +3,7 @@ import { isBlacklisted } from "../token-blacklist.js";
 import { isDevBlocked, getBlockedDevs } from "../dev-blocklist.js";
 import { log } from "../logger.js";
 import { isBaseMintOnCooldown, isPoolOnCooldown } from "../pool-memory.js";
-import { scoreEvilPandaCandidate, getEvilPandaThresholds } from "../evilpanda-policy.js";
+import { scoreEvilPandaCandidate, getEvilPandaThresholds, activityWindowMultiplier } from "../evilpanda-policy.js";
 import { evaluateTokenRisk } from "../token-risk-policy.js";
 import { getTokenInfo } from "./token.js";
 import { Connection, PublicKey } from "@solana/web3.js";
@@ -312,7 +312,14 @@ export async function getTopCandidates({ limit = 10 } = {}) {
   // window so one nonempty 5m result does not hide stronger sustained pools.
   const timeframes = s.timeframe === "5m" ? ["5m", "30m", "1h", "2h"] : [s.timeframe];
   const results = await Promise.allSettled(timeframes.map((timeframe) =>
-    discoverPools({ page_size: 50, overrides: { timeframe } })
+    discoverPools({ page_size: 50, overrides: {
+      timeframe,
+      // Configured 5m floors should represent the same activity rate in every window.
+      ...(s.timeframe === "5m" ? {
+        minVolume: s.minVolume * activityWindowMultiplier(timeframe),
+        minFeeActiveTvlRatio: s.minFeeActiveTvlRatio * activityWindowMultiplier(timeframe),
+      } : {}),
+    } })
   ));
   const successful = results.flatMap((result, i) => {
     if (result.status === "fulfilled") return [{ timeframe: timeframes[i], ...result.value }];

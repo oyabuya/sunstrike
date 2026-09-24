@@ -2,6 +2,16 @@ import { config } from "./config.js";
 
 const DEFAULT_BINS_ABOVE = 10;
 
+export function activityPerFiveMinutes(value, timeframe = "5m") {
+  const minutes = { "5m": 5, "30m": 30, "1h": 60, "2h": 120 }[timeframe];
+  const amount = Number(value);
+  return minutes && value != null && Number.isFinite(amount) ? amount * 5 / minutes : null;
+}
+
+export function activityWindowMultiplier(timeframe = "5m") {
+  return { "5m": 1, "30m": 6, "1h": 12, "2h": 24 }[timeframe] ?? null;
+}
+
 export function computeEvilPandaDeployPlan({ volatility = null, binStep = null } = {}) {
   const v = Number(volatility);
   const step = Number(binStep);
@@ -30,8 +40,8 @@ export function formatEvilPandaDeployPlan(plan) {
 
 export function scoreEvilPandaCandidate(pool = {}) {
   let score = 0;
-  const fee = Number(pool.fee_active_tvl_ratio);
-  const volume = Number(pool.volume_window);
+  const fee = activityPerFiveMinutes(pool.fee_active_tvl_ratio, pool.discovery_timeframe);
+  const volume = activityPerFiveMinutes(pool.volume_window, pool.discovery_timeframe);
   const vol = Number(pool.volatility);
   const smartWallets = Number(pool.gmgn_smart_wallets);
   const top10 = pool.gmgn_top10 != null ? Number(pool.gmgn_top10) * 100 : null;
@@ -46,9 +56,9 @@ export function scoreEvilPandaCandidate(pool = {}) {
   }
 
   if (Number.isFinite(volume)) {
-    if (volume >= 1_000_000) score += 14;
-    else if (volume >= 250_000) score += 10;
-    else if (volume >= 50_000) score += 4;
+    if (volume >= 10_000) score += 14;
+    else if (volume >= 2_500) score += 10;
+    else if (volume >= 500) score += 4;
   }
 
   if (pool.smart_money_buy) score += 10;

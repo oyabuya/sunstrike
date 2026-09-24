@@ -1,4 +1,5 @@
 import { log, logAction } from "../logger.js";
+import { activityPerFiveMinutes } from "../evilpanda-policy.js";
 
 const ENDPOINT = "https://openrouter.ai/api/alpha/decisions";
 const MODEL = "typesafe/jev-1.13";
@@ -14,7 +15,9 @@ export function buildJevShadowRequest(candidates) {
     pool_address: pool.pool,
     discovery_timeframe: pool.discovery_timeframe ?? null,
     fee_active_tvl_ratio: finite(pool.fee_active_tvl_ratio),
+    fee_active_tvl_ratio_5m_avg: activityPerFiveMinutes(pool.fee_active_tvl_ratio, pool.discovery_timeframe),
     volume_window_usd: finite(pool.volume_window),
+    volume_5m_avg_usd: activityPerFiveMinutes(pool.volume_window, pool.discovery_timeframe),
     active_tvl_usd: finite(pool.active_tvl),
     volatility: finite(pool.volatility),
     organic_score: finite(pool.organic_score),
@@ -36,7 +39,7 @@ export function buildJevShadowRequest(candidates) {
   for (const p of pools) {
     questions[`${p.id}_fees`] = {
       type: "score",
-      instructions: `For ${p.id}, how strong is observed fee activity relative to active TVL? Use only supplied metrics; missing data is uncertain.`,
+      instructions: `For ${p.id}, how strong is observed fee activity relative to active TVL? Compare the 5m average across windows, and treat longer-window averages as uncertain about current activity. Use only supplied metrics; missing data is uncertain.`,
       criteria: [
         "Weak or unavailable fee evidence relative to active TVL",
         "Some fee activity, but the evidence is mixed or incomplete",

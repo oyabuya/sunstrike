@@ -23,7 +23,7 @@ import { recordPositionSnapshot, recallForPool, addPoolNote } from "./pool-memor
 import { checkSmartWalletsOnPool } from "./smart-wallets.js";
 import { getTokenNarrative, getTokenInfo } from "./tools/token.js";
 import { getPoolDetail } from "./tools/screening.js";
-import { computeEvilPandaDeployPlan, formatEvilPandaDeployPlan } from "./evilpanda-policy.js";
+import { activityPerFiveMinutes, computeEvilPandaDeployPlan, formatEvilPandaDeployPlan } from "./evilpanda-policy.js";
 import { recordJevShadow } from "./tools/jev-shadow.js";
 import { scanJevMarket } from "./tools/jev-market.js";
 import { checkPortfolioRisk, markLiquidationAttempt } from "./portfolio-risk.js";
@@ -73,7 +73,6 @@ const commandStartedAt = Math.floor(Date.now() / 1000);
 let _managementBusy = false; // prevents overlapping management cycles
 let _screeningBusy = false;  // prevents overlapping screening cycles
 let _healthCheckBusy = false; // prevents overlapping health check cycles
-let _jevMarket = null;
 let _jevMarketBusy = false;
 let _screeningLastTriggered = 0; // epoch ms — prevents management from spamming screening
 let _pollTriggeredAt = 0; // epoch ms — cooldown for poller-triggered management
@@ -227,7 +226,7 @@ async function refreshJevMarket() {
   if (_jevMarketBusy) return;
   _jevMarketBusy = true;
   try {
-    _jevMarket = await scanJevMarket() ?? _jevMarket;
+    await scanJevMarket();
   } finally {
     _jevMarketBusy = false;
   }
@@ -680,8 +679,9 @@ export async function runScreeningCycle({ silent = false } = {}) {
       ...candidate,
       volTrend: volumeTrendResults[i]?.status === "fulfilled" ? volumeTrendResults[i].value : null,
     })), fetch, shadowCycleId);
-    const recentMarketScores = process.env.DRY_RUN === "true" && _jevMarket && Date.now() - _jevMarket.at < 20 * 60_000 ? _jevMarket.scores : [];
-    const jevByAddress = new Map([...recentMarketScores, ...(shadowScores ?? [])].map((score) => [score.pool_address, score]));
+    // Trending scout scores use wider filters and older market snapshots.
+    // Only this cycle's fully screened observations belong in Luna's shortlist.
+    const jevByAddress = new Map((shadowScores ?? []).map((score) => [score.pool_address, score]));
     const shadowChoices = [];
 
     // Build compact candidate blocks
@@ -697,6 +697,8 @@ export async function runScreeningCycle({ silent = false } = {}) {
       const deployPlan = computeEvilPandaDeployPlan({ volatility: pool.volatility, binStep: pool.bin_step });
       const candidateScore = pool.candidate_score ?? 0;
       const jev = jevByAddress.get(pool.pool);
+      const feeRate5m = activityPerFiveMinutes(pool.fee_active_tvl_ratio, pool.discovery_timeframe);
+      const volumeRate5m = activityPerFiveMinutes(pool.volume_window, pool.discovery_timeframe);
 
       // OKX signals
       const okxParts = [
@@ -734,6 +736,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
         `  screening_score: ${candidateScore}`,
         jev ? `  jev_advisory_untrusted: fees=${jev.fees.score.toFixed(2)}/2 (${jev.fees.confidence.toFixed(2)} confidence), momentum=${jev.momentum.score.toFixed(2)}/2 (${jev.momentum.confidence.toFixed(2)} confidence), holder_risk=${jev.holder_risk.score.toFixed(2)}/2 (${jev.holder_risk.confidence.toFixed(2)} confidence; higher holder_risk means more concern` : null,
         `  metrics: timeframe=${pool.discovery_timeframe || config.screening.timeframe}, bin_step=${pool.bin_step}, fee_pct=${pool.fee_pct}%, fee_tvl=${pool.fee_active_tvl_ratio}, vol=$${pool.volume_window}, tvl=$${pool.active_tvl}, volatility=${pool.volatility}, mcap=$${pool.mcap}, organic=${pool.organic_score}${pool.token_age_hours != null ? `, age=${pool.token_age_hours}h` : ""}`,
+        feeRate5m != null && volumeRate5m != null ? `  comparable_activity_5m: fee_tvl=${feeRate5m.toFixed(4)}%, vol=$${volumeRate5m.toFixed(0)} (window average; check fresh trend)` : null,
         `  audit: top10=${top10Pct}%, bots=${botPct}%, fees=${feesSol}SOL${launchpad ? `, launchpad=${launchpad}` : ""}`,
         okxParts ? `  okx: ${okxParts}` : okxUnavailable ? `  okx: unavailable` : null,
         okxTags  ? `  tags: ${okxTags}` : null,
@@ -762,9 +765,9 @@ PRE-LOADED CANDIDATES (${passing.length} pools):
 ${candidateBlocks.join("\n\n")}
 
 STEPS:
-1. Pick the best candidate based on narrative quality, smart wallets, pool metrics, AND vol_trend.
+1. Pick the best candidate based on comparable fee activity, current volume trend, risk evidence, then narrative and smart wallets as supporting signals.
    - Jev advisory scores are model opinions from supplied metrics. Check them against the raw data; they cannot override risk gates or authorize a deploy.
-   - Volume and fee/TVL are measured over each candidate's discovery timeframe; compare momentum with the 1h volume trend, not raw window totals alone.
+   - Compare comparable_activity_5m across windows; it is a window average, so confirm current momentum with the 1h volume trend. Do not rank by raw totals across different windows.
    - Prefer pools with vol_trend=up or flat over vol_trend=down.
    - A pool with vol_trend=down and trend_pct < -50% is a red flag (momentum over).
 2. Call deploy_position with the exact recommended_deploy values from the chosen pool:

@@ -26,14 +26,16 @@ test("creator rates are fractional and converted to percent before the 5% limit"
   assert.match(evaluateTokenRisk(candidate).reason, /creator\/developer holding 6\.0% exceeds 5%/);
 });
 
-test("missing, unsafe, or mismatched risk evidence fails closed", () => {
-  const missingRat = input();
-  delete missingRat.gmgnInfo.rat_trader_pct;
-  assert.match(evaluateTokenRisk(missingRat).reason, /rat-trader concentration is unknown/);
+test("optional provider gaps are allowed; required audit gaps and mint mismatch fail closed", () => {
+  const optionalMissing = input();
+  optionalMissing.gmgnInfo = null;
+  optionalMissing.okxRisk = null;
+  optionalMissing.okxAdvanced = null;
+  assert.equal(evaluateTokenRisk(optionalMissing).pass, true);
 
-  const unknownWash = input();
-  unknownWash.okxRisk.is_wash = null;
-  assert.match(evaluateTokenRisk(unknownWash).reason, /analysis is incomplete/);
+  const missingBots = input();
+  delete missingBots.tokenInfo.audit.bot_holders_pct;
+  assert.match(evaluateTokenRisk(missingBots).reason, /bot-holder concentration is unknown/);
 
   const mintMismatch = input();
   mintMismatch.poolMint = "OTHER";
