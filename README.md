@@ -34,6 +34,8 @@ activity window using the same token age, market cap, holder, and safety limits.
 The returned profile identifies the fallback; final Jupiter audit and deploy
 preflight still apply. This admits pools with sustained 2h activity even when
 their latest 5m volume is below the 5m threshold.
+Every candidate is also checked against the Solana RPC for an existing account
+owned by the Meteora DLMM program before it is shown to the agent.
 
 ---
 

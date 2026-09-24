@@ -6,6 +6,7 @@ import { isBaseMintOnCooldown, isPoolOnCooldown } from "../pool-memory.js";
 import { scoreEvilPandaCandidate, getEvilPandaThresholds } from "../evilpanda-policy.js";
 import { evaluateTokenRisk } from "../token-risk-policy.js";
 import { getTokenInfo } from "./token.js";
+import { Connection, PublicKey } from "@solana/web3.js";
 
 const FETCH_TIMEOUT_MS = 15_000;
 
@@ -40,6 +41,28 @@ const DATAPI_JUP = "https://datapi.jup.ag/v1";
 
 const POOL_DISCOVERY_BASE = "https://pool-discovery-api.datapi.meteora.ag";
 const DLMM_ANALYTICS_BASE = "https://dlmm.datapi.meteora.ag";
+const DLMM_PROGRAM_ID = new PublicKey("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo");
+
+async function verifiedDlmmPools(pools, filteredOut) {
+  if (!pools.length) return pools;
+  if (!process.env.RPC_URL) throw new Error("RPC_URL required to verify discovered DLMM pools");
+  const candidates = pools.flatMap((pool) => {
+    try { return [{ pool, address: new PublicKey(pool.pool) }]; }
+    catch {
+      pushFilteredReason(filteredOut, pool, "invalid pool address");
+      return [];
+    }
+  });
+  if (!candidates.length) return [];
+  const accounts = await new Connection(process.env.RPC_URL, "confirmed")
+    .getMultipleAccountsInfo(candidates.map(({ address }) => address), "confirmed");
+  return candidates.filter(({ pool }, index) => {
+    if (accounts[index]?.owner.equals(DLMM_PROGRAM_ID)) return true;
+    pushFilteredReason(filteredOut, pool, "pool account missing or not owned by Meteora DLMM");
+    log("screening", `Discarded unverified DLMM pool ${pool.pool?.slice(0, 8)}`);
+    return false;
+  }).map(({ pool }) => pool);
+}
 
 // ─── Tematic keyword blacklist (EvilPanda — coins to avoid) ─────────────────
 // Political figures, celebrity coins, justice/narrative scams — all tend to
@@ -303,6 +326,7 @@ export async function getTopCandidates({ limit = 10 } = {}) {
   const { pools } = discovery;
   const filteredOut = [];
   let totalScreened = pools.length;
+  const onchainPools = await verifiedDlmmPools(pools, filteredOut);
 
   // Exclude pools where the wallet already has an open position
   const { getMyPositions } = await import("./dlmm.js");
@@ -333,7 +357,7 @@ export async function getTopCandidates({ limit = 10 } = {}) {
       return true;
     });
 
-  let eligible = buildBaseEligible(pools);
+  let eligible = buildBaseEligible(onchainPools);
   const evilPandaThresholds = getEvilPandaThresholds(s);
   const {
     maxDevHoldPct,
@@ -711,7 +735,7 @@ return true;
     candidates: eligible,
     total_eligible: eligible.length,
     total_screened: totalScreened,
-    discovery: { api_matches: discovery.total, api_returned: discovery.api_returned, local_passed: pools.length },
+    discovery: { api_matches: discovery.total, api_returned: discovery.api_returned, local_passed: onchainPools.length },
     filtered_examples: filteredOut.slice(0, 3),
     screening_profile: screeningProfile,
   };
