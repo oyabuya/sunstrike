@@ -382,7 +382,7 @@ export function getStateSummary() {
 }
 
 /**
- * Check all exit conditions for a position (trailing TP, stop loss, OOR, low yield).
+ * Track position state and check configured exit conditions.
  * Updates peak_pnl_pct, trailing_active, and OOR state.
  * @param {string} position_address
  * @param {object} positionData - fields from getMyPositions: pnl_pct, in_range, fee_per_tvl_24h
@@ -407,14 +407,7 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
   const trailingDropPctToUse = effectiveFeeTvl != null && effectiveFeeTvl >= highYieldTrailingThreshold
     ? Math.max(baseTrailingDropPct ?? 0, highYieldTrailingDropPct)
     : baseTrailingDropPct;
-  const baseOorWaitMinutes = mgmtConfig.outOfRangeWaitMinutes;
-  const highYieldOorThreshold = mgmtConfig.highYieldOorFeePerTvl24h ?? 15;
-  const highYieldOorWaitMinutes = mgmtConfig.highYieldOorWaitMinutes ?? 90;
-  const outOfRangeWaitMinutesToUse = effectiveFeeTvl != null && effectiveFeeTvl >= highYieldOorThreshold
-    ? Math.max(baseOorWaitMinutes ?? 0, highYieldOorWaitMinutes)
-    : baseOorWaitMinutes;
-
-  if (pos.confirmed_trailing_exit_until) {
+  if (mgmtConfig.trailingTakeProfit && pos.confirmed_trailing_exit_until) {
     if (new Date(pos.confirmed_trailing_exit_until).getTime() > Date.now() && pos.confirmed_trailing_exit_reason) {
       const reason = pos.confirmed_trailing_exit_reason;
       pos.confirmed_trailing_exit_reason = null;
@@ -448,18 +441,10 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
 
   if (changed) save(state);
 
-  // ── Stop loss ──────────────────────────────────────────────────
-  if (!pnl_pct_suspicious && currentPnlPct != null && mgmtConfig.stopLossPct != null && currentPnlPct <= mgmtConfig.stopLossPct) {
-    return {
-      action: "STOP_LOSS",
-      reason: `Stop loss: PnL ${currentPnlPct.toFixed(2)}% <= ${mgmtConfig.stopLossPct}%`,
-    };
-  }
-
   // ── Trailing TP ────────────────────────────────────────────────
   // EvilPanda: never exit before the dump cycle completes (minAgeBeforeClose).
   // Trailing TP is disabled by default; when enabled, age gate still applies.
-  if (!pnl_pct_suspicious && pos.trailing_active) {
+  if (mgmtConfig.trailingTakeProfit && !pnl_pct_suspicious && pos.trailing_active) {
     const ageMinutes = positionData.age_minutes ?? 0;
     const minAgeClose = mgmtConfig.minAgeBeforeClose ?? 240;
     if (ageMinutes < minAgeClose) {
@@ -480,39 +465,14 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
     }
   }
 
-  // ── Out of range too long ──────────────────────────────────────
-  // EvilPanda rule: ONLY exit OOR when price PUMPED ABOVE range.
-  // If price DUMPED BELOW range — hold and wait for bounce (CHART_SIGNAL handles exit).
-  // Reasoning: when price is below our range, panic sellers are paying us fees.
-  //            Closing now = worst possible exit timing. Wait for the green candle.
+  // Above-range exits are immediate. Below-range exits require separate
+  // persistence and token-health evidence; a drawdown alone is not enough.
   if (pos.out_of_range_since) {
     const minutesOOR = Math.floor((Date.now() - new Date(pos.out_of_range_since).getTime()) / 60000);
-    if (outOfRangeWaitMinutesToUse != null && minutesOOR >= outOfRangeWaitMinutesToUse) {
-      const activeBin = positionData.active_bin ?? positionData.active_bin_id ?? null;
-      const upperBin  = positionData.upper_bin  ?? positionData.max_bin_id    ?? null;
-      const lowerBin  = positionData.lower_bin  ?? positionData.min_bin_id    ?? null;
-
-      // Direction unknown → apply exit (safe default)
-      if (activeBin == null || upperBin == null) {
-        return {
-          action: "OUT_OF_RANGE",
-          reason: `Out of range for ${minutesOOR}m (limit: ${outOfRangeWaitMinutesToUse}m)`,
-        };
-      }
-
-      // Price PUMPED above range → exit (missing fee capture, price moving away)
-      if (activeBin > upperBin) {
-        return {
-          action: "OUT_OF_RANGE",
-          reason: `Out of range for ${minutesOOR}m (limit: ${outOfRangeWaitMinutesToUse}m) — price above range`,
-        };
-      }
-
-      // Price DUMPED below range → DO NOT exit — wait for bounce (EvilPanda)
-      if (lowerBin != null && activeBin < lowerBin) {
-        log("state", `Position ${position_address} OOR ${minutesOOR}m — price BELOW range (dump). Holding per EvilPanda — waiting for CHART_SIGNAL bounce, not exiting on red.`);
-        return null; // no exit signal
-      }
+    const activeBin = positionData.active_bin ?? positionData.active_bin_id ?? null;
+    const upperBin = positionData.upper_bin ?? positionData.max_bin_id ?? null;
+    if (activeBin != null && upperBin != null && activeBin > upperBin) {
+      return { action: "OUT_OF_RANGE_UP", reason: `Price above range for ${minutesOOR}m` };
     }
   }
 

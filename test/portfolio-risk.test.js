@@ -13,11 +13,10 @@ import {
 } from "../portfolio-risk.js";
 
 const risk = {
-  maxPositions: 1,
+  maxPositions: 2,
   capitalBudgetUsd: 100,
-  maxCumulativeLossUsd: 20,
-  maxPositionUsd: 20,
-  maxConcurrentExposureUsd: 20,
+  maxPositionUsd: 50,
+  maxConcurrentExposureUsd: 85,
   minimumLiquidReserveUsd: 15,
 };
 const fresh = (totalUsd, positions = []) => {
@@ -35,7 +34,7 @@ test("portfolio equity includes wallet, LP principal and unclaimed fees; unknown
   assert.throws(() => buildPortfolioSnapshot(balance, positions), /unknown USD value/);
 });
 
-test("the $20 loss breaker latches across checks and restart via durable state", () => {
+test("portfolio ledger records drawdown without forcing a close", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sunstrike-risk-"));
   const statePath = path.join(dir, "portfolio-risk.json");
   const initial = fresh(100);
@@ -49,12 +48,12 @@ test("the $20 loss breaker latches across checks and restart via durable state",
 
   const loss = fresh(79);
   const first = checkPortfolioRisk({ ...loss, expectedWallet: "DEDICATED", risk, statePath });
-  assert.equal(first.tripped, true);
+  assert.equal(first.allowed, true);
   assert.equal(first.lpLossUsd, 21);
   const recovered = fresh(99);
   const afterRestart = checkPortfolioRisk({ ...recovered, expectedWallet: "DEDICATED", risk, statePath });
-  assert.equal(afterRestart.tripped, true);
-  assert.match(fs.readFileSync(statePath, "utf8"), /"tripped": true/);
+  assert.equal(afterRestart.allowed, true);
+  assert.match(fs.readFileSync(statePath, "utf8"), /"tripped": false/);
   fs.rmSync(statePath);
   const missingState = checkPortfolioRisk({ ...recovered, expectedWallet: "DEDICATED", risk, statePath });
   assert.equal(missingState.allowed, false);
@@ -63,7 +62,7 @@ test("the $20 loss breaker latches across checks and restart via durable state",
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test("metered model costs stay outside the LP capital and loss cap", () => {
+test("metered model costs stay outside LP capital accounting", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sunstrike-risk-net-"));
   const statePath = path.join(dir, "portfolio-risk.json");
   const starting = fresh(100);
@@ -90,7 +89,7 @@ test("missing risk state blocks instead of resetting loss history", () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test("unknown model cost accounting does not latch the LP loss breaker", () => {
+test("unknown model cost accounting does not block LP entries", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sunstrike-risk-costs-"));
   const statePath = path.join(dir, "portfolio-risk.json");
   const sample = fresh(100);
@@ -143,16 +142,17 @@ test("wrong wallet, stale snapshot and concurrent policy changes block live entr
   mismatched.positions.wallet = "OTHER";
   assert.throws(() => buildPortfolioSnapshot(mismatched.balance, mismatched.positions), /different wallets/);
 
-  assert.equal(checkPortfolioRisk({ ...sample, expectedWallet: "DEDICATED", risk: { ...risk, maxPositions: 2 } }).allowed, false);
+  assert.equal(checkPortfolioRisk({ ...sample, expectedWallet: "DEDICATED", risk: { ...risk, maxPositions: 1 } }).allowed, false);
 });
 
 test("USD sizing enforces per-position cap and leaves liquid reserve", () => {
   assert.equal(validateNewPosition({ amountSol: 0.2, solPrice: 100, walletUsd: 100, risk }).pass, true);
-  assert.equal(validateNewPosition({ amountSol: 0.21, solPrice: 100, walletUsd: 100, risk }).pass, false);
+  assert.equal(validateNewPosition({ amountSol: 0.51, solPrice: 100, walletUsd: 100, risk }).pass, false);
+  assert.equal(validateNewPosition({ amountSol: 0.2, solPrice: 100, walletUsd: 100, currentExposureUsd: 70, risk }).pass, false);
   assert.match(validateNewPosition({ amountSol: 0.2, solPrice: 100, walletUsd: 30, risk }).reason, /liquid reserve/);
 });
 
-test('SOL appreciation above budget does not block; initial equity still anchors loss cap', () => {
+test('SOL appreciation above budget does not block; initial equity still anchors drawdown reporting', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sunstrike-appreciation-'));
   const statePath = path.join(dir, 'risk.json');
   try {
@@ -160,6 +160,6 @@ test('SOL appreciation above budget does not block; initial equity still anchors
     assert.equal(checkPortfolioRisk({ ...fresh(105), expectedWallet: 'DEDICATED', risk, statePath }).allowed, true);
     const loss = checkPortfolioRisk({ ...fresh(81), expectedWallet: 'DEDICATED', risk, statePath });
     assert.equal(loss.lpLossUsd, 20);
-    assert.equal(loss.tripped, true);
+    assert.equal(loss.allowed, true);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

@@ -23,6 +23,7 @@ import { getTokenInfo, getTokenHolders, getTokenNarrative } from "./token.js";
 import { getTrendingTokens, getDexScreenerPairs, getRugCheckReport } from "./dexscreener-rugcheck.js";
 import { config, reloadScreeningThresholds } from "../config.js";
 import { evaluateTokenRisk } from "../token-risk-policy.js";
+import { assessFreshActivity, assessTokenMaturity } from "../candidate-quality.js";
 import { checkPortfolioRisk, validateNewPosition } from "../portfolio-risk.js";
 import fs from "fs";
 import path from "path";
@@ -148,7 +149,8 @@ const toolMap = {
       "positionsizepct", "gasreserve", "minsoltoopen", "autocompoundenabled",
       "autocompoundmode", "antirugstrict", "requirerenouncedmint",
       "mintokenfeessol", "maxbundlepct", "maxtop10pct", "maxrattraderpct",
-      "maxdevholdpct", "maxbotholderspct",
+      "maxdevholdpct", "maxbotholderspct", "minorganic", "mintokenagehours",
+      "maxtokenagehours", "takeprofitfeepct", "trailingtakeprofit", "minfeepertvl24h",
     ]);
     if (Object.keys(changes || {}).some((key) => OWNER_ONLY_KEYS.has(key.toLowerCase()))) {
       return { success: false, reason: "Capital and safety limits can only be changed by the owner in local configuration." };
@@ -514,11 +516,20 @@ async function runSafetyChecks(name, args) {
       }
 
       let poolData = null;
+      let oneHourPool = null;
       try {
-        poolData = await getPoolDetail({ pool_address: args.pool_address });
+        [poolData, oneHourPool] = await Promise.all([
+          getPoolDetail({ pool_address: args.pool_address, timeframe: "5m" }),
+          getPoolDetail({ pool_address: args.pool_address, timeframe: "1h" }),
+        ]);
       } catch (error) {
         return { pass: false, reason: `Deploy blocked: current pool metadata could not be verified (${error.message}).` };
       }
+      if (poolData?.pool !== args.pool_address || oneHourPool?.pool !== args.pool_address) {
+        return { pass: false, reason: "Deploy blocked: fresh activity belongs to a different pool." };
+      }
+      const activity = assessFreshActivity({ fiveMinutes: poolData, oneHour: oneHourPool, screening: config.screening });
+      if (!activity.pass) return { pass: false, reason: `Deploy blocked: ${activity.reason}.` };
       if ((!poolData?.quote?.mint || !poolData?.base?.mint)) {
         return { pass: false, reason: "Deploy blocked: current pool and token mints could not be verified." };
       }
@@ -566,6 +577,8 @@ async function runSafetyChecks(name, args) {
         screening: config.screening,
       });
       if (!riskResult.pass) return { pass: false, reason: `Deploy blocked: ${riskResult.reason}.` };
+      const maturity = assessTokenMaturity({ pool: poolData, tokenInfo });
+      if (!maturity.pass) return { pass: false, reason: `Deploy blocked: ${maturity.reason}.` };
 
       const minFeesSol = config.screening.minTokenFeesSol ?? 50;
       const feesSol = Number(tokenInfo?.global_fees_sol);
@@ -600,8 +613,11 @@ async function runSafetyChecks(name, args) {
         };
       }
 
-      if (config.risk.maxPositions !== 1) {
-        return { pass: false, reason: "Deploy blocked: the approved canary policy permits one open position." };
+      if (config.risk.maxPositions !== 2) {
+        return { pass: false, reason: "Deploy blocked: the approved policy permits at most two open positions." };
+      }
+      if (Math.abs(amountY - config.management.deployAmountSol) > 0.000001) {
+        return { pass: false, reason: `Deploy blocked: the approved position size is ${config.management.deployAmountSol} SOL.` };
       }
       if ((args.strategy ?? config.strategy.strategy) !== "spot") {
         return { pass: false, reason: "Deploy blocked: the approved canary baseline requires the Spot strategy." };

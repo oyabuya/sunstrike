@@ -1,12 +1,20 @@
 # Sunstrike — handoff
 
+## Keputusan pemilik terbaru — 24 September 2026
+
+- Kebijakan risiko baru menggantikan catatan historis $20 di bawah: modal perencanaan $100 dapat hilang seluruhnya; tidak ada breaker rugi total atau jeda otomatis setelah dua posisi rugi. Maksimum dua posisi, entry tepat 0,2 SOL per posisi, dengan batas eksposur USD dan reserve cair tetap berlaku.
+- Preferensi entry terbaru: umur token minimum 12 jam, tanpa batas maksimum; Jupiter Organic Score minimum 80 yang dibaca ulang saat preflight. Data hilang berarti skip.
+- Hold posisi yang masih dalam range dan menghasilkan fee meski nilai awal 0,2 SOL turun ke 0,1 SOL. Tidak ada take profit atau stop loss persentase otomatis. Tutup segera saat OOR atas atau audit token terbaru menunjukkan risiko rug tegas, termasuk ketika masih dalam range.
+- OOR bawah ditinjau setelah empat jam. Close hanya jika volume dan fee sama-sama melemah berat, atau tekanan jual token disertai tren volume turun dan fee lemah. Sinyal tidak lengkap berarti hold dan audit ulang. Aturan tidak menjamin batas rugi 0,1 SOL; rug dapat menghabiskan posisi.
+- Patch lokal menambah gate aktivitas 5m+1h di screening dan preflight, skenario fee bersih sebagai ranking advisory, log funnel/keputusan, serta monitor token dan exit 30 detik. Belum dideploy ke VPS atau diuji terhadap PnL nyata; pertahankan `DRY_RUN=true` sampai validasi operasional.
+
 Terakhir diperbarui: **2026-09-24 WIB**. Baca `AGENTS.md`, dokumen ini, `RESTART_AUDIT_2026-09-23.md`, dan `STRATEGY_REVIEW_2026-09-24.md` sebelum melanjutkan.
 
 ## Keputusan terakhir pemilik
 
-- Pemilik meminta Sunstrike berjalan live sesegera mungkin. Batas risiko yang dipilih tetap **modal LP $100, rugi LP maksimum $20**; request ini tidak menghapus hard gate.
+- Pemilik meminta Sunstrike berjalan live sesegera mungkin. Kebijakan risiko terkini ada di bagian atas; angka $20 pada catatan historis tidak berlaku lagi.
 - Tiga dry run 23 September mendahului patch parity terbaru. Hasilnya bukan bukti siap live atau profit.
-- Biaya API/LLM adalah biaya operasional di luar modal LP $100 dan **tidak mengurangi breaker rugi LP $20**. PnL akhir tetap dapat melaporkan biaya operasional secara terpisah.
+- Biaya API/LLM adalah biaya operasional di luar modal LP $100 dan dilaporkan terpisah dalam PnL akhir.
 - Histori April tetap utuh sebagai arsip. Rekonsiliasi April bukan syarat campaign wallet baru; statistik dan auto-learning posisi kini disaring per wallet.
 - Sasaran tetap PnL bersih setelah perubahan inventory, swap, gas, rent, dan biaya operasional. Strategi belum terbukti profit konsisten.
 

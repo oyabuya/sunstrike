@@ -1,10 +1,11 @@
 import { config } from "../config.js";
 import { isBlacklisted } from "../token-blacklist.js";
 import { isDevBlocked, getBlockedDevs } from "../dev-blocklist.js";
-import { log } from "../logger.js";
+import { log, logAction } from "../logger.js";
 import { isBaseMintOnCooldown, isPoolOnCooldown } from "../pool-memory.js";
 import { scoreEvilPandaCandidate, getEvilPandaThresholds, activityWindowMultiplier } from "../evilpanda-policy.js";
 import { evaluateTokenRisk } from "../token-risk-policy.js";
+import { assessFreshActivity, assessTokenMaturity } from "../candidate-quality.js";
 import { getTokenInfo } from "./token.js";
 import { Connection, PublicKey } from "@solana/web3.js";
 
@@ -327,6 +328,15 @@ export async function getTopCandidates({ limit = 10 } = {}) {
     return [];
   });
   if (!successful.length) throw new Error("Pool Discovery unavailable across all configured timeframes");
+  const windowSnapshots = new Map();
+  for (const result of successful) {
+    for (const pool of result.pools) {
+      if (!pool?.pool) continue;
+      const snapshots = windowSnapshots.get(pool.pool) ?? {};
+      snapshots[result.timeframe] = pool;
+      windowSnapshots.set(pool.pool, snapshots);
+    }
+  }
   const poolsByAddress = new Map();
   // Round-robin keeps the existing 50-pool enrichment bound while giving
   // every activity window a chance to contribute candidates.
@@ -334,11 +344,10 @@ export async function getTopCandidates({ limit = 10 } = {}) {
     for (const result of successful) {
       const pool = result.pools[i];
       if (!pool) continue;
-      const existing = poolsByAddress.get(pool.pool);
-      if (existing) existing.discovery_timeframes.push(result.timeframe);
-      else if (poolsByAddress.size < 50) poolsByAddress.set(pool.pool, {
+      if (!poolsByAddress.has(pool.pool) && poolsByAddress.size < 50) poolsByAddress.set(pool.pool, {
         ...pool, discovery_timeframe: result.timeframe,
-        discovery_timeframes: [result.timeframe],
+        discovery_timeframes: Object.keys(windowSnapshots.get(pool.pool) ?? {}),
+        activity_windows: windowSnapshots.get(pool.pool),
       });
     }
   }
@@ -352,7 +361,17 @@ export async function getTopCandidates({ limit = 10 } = {}) {
   const { pools } = discovery;
   const filteredOut = [];
   let totalScreened = pools.length;
-  const onchainPools = await verifiedDlmmPools(pools, filteredOut);
+  const activityPools = s.timeframe === "5m" ? pools.filter((pool) => {
+    const activity = assessFreshActivity({
+      fiveMinutes: pool.activity_windows?.["5m"],
+      oneHour: pool.activity_windows?.["1h"],
+      screening: s,
+    });
+    if (activity.pass) return true;
+    pushFilteredReason(filteredOut, pool, activity.reason);
+    return false;
+  }) : pools;
+  const onchainPools = await verifiedDlmmPools(activityPools, filteredOut);
 
   // Exclude pools where the wallet already has an open position
   const { getMyPositions } = await import("./dlmm.js");
@@ -625,6 +644,11 @@ export async function getTopCandidates({ limit = 10 } = {}) {
     }
     if (s.antiRugStrict) {
       eligible.splice(0, eligible.length, ...eligible.filter((pool) => {
+        const maturity = assessTokenMaturity({ pool, tokenInfo: pool.token_info });
+        if (!maturity.pass) {
+          pushFilteredReason(filteredOut, pool, maturity.reason);
+          return false;
+        }
         const result = evaluateTokenRisk({
           expectedMint: pool.base?.mint,
           poolMint: pool.base?.mint,
@@ -756,6 +780,12 @@ return true;
     .map((p) => ({ ...p, candidate_score: scoreEvilPandaCandidate(p) }))
     .sort((a, b) => (b.candidate_score ?? 0) - (a.candidate_score ?? 0))
     .slice(0, limit);
+
+  logAction({ tool: "screening_funnel", args: { profile: screeningProfile }, result: {
+    discovered: totalScreened,
+    eligible: eligible.map((p) => ({ pool_address: p.pool, score: p.candidate_score })),
+    rejected: filteredOut.map(({ name, reason }) => ({ name, reason })),
+  }, success: true });
 
   return {
     candidates: eligible,

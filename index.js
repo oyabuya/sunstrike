@@ -24,16 +24,18 @@ import { checkSmartWalletsOnPool } from "./smart-wallets.js";
 import { getTokenNarrative, getTokenInfo } from "./tools/token.js";
 import { getPoolDetail } from "./tools/screening.js";
 import { activityPerFiveMinutes, computeEvilPandaDeployPlan, formatEvilPandaDeployPlan } from "./evilpanda-policy.js";
+import { estimateNetFeeScenario } from "./candidate-quality.js";
+import { readOpenTokenStatus } from "./open-token-status.js";
+import { assessBelowRangeExit } from "./position-exit-policy.js";
 import { recordJevShadow } from "./tools/jev-shadow.js";
 import { scanJevMarket } from "./tools/jev-market.js";
-import { checkPortfolioRisk, markLiquidationAttempt } from "./portfolio-risk.js";
+import { checkPortfolioRisk } from "./portfolio-risk.js";
 import { evaluateTokenRisk } from "./token-risk-policy.js";
 
 log("startup", "DLMM LP Agent starting...");
 log("startup", `Mode: ${process.env.DRY_RUN === "true" ? "DRY RUN" : "LIVE"}`);
 log("startup", `Models: management=${config.llm.managementModel}, screening=${config.llm.screeningModel}, general=${config.llm.generalModel}`);
 
-const TP_PCT = config.management.takeProfitFeePct;
 const DEPLOY = config.management.deployAmountSol;
 
 // ═══════════════════════════════════════════
@@ -78,8 +80,9 @@ let _screeningLastTriggered = 0; // epoch ms — prevents management from spammi
 let _pollTriggeredAt = 0; // epoch ms — cooldown for poller-triggered management
 const _peakConfirmTimers = new Map();
 const _trailingDropConfirmTimers = new Map();
-const _suspectPnlSince = new Map(); // positionAddress → firstSuspectAt (ms)
-let _lastBreakerNoticeAt = 0;
+const _oorUpAttemptAt = new Map(); // positionAddress → last above-range close attempt
+const _openTokenStatusCache = new Map(); // mint → { at, status }
+const _belowRangeCheckCache = new Map(); // positionAddress → { at, assessment }
 let _lastRiskReadFailureAt = 0;
 const TRAILING_PEAK_CONFIRM_DELAY_MS = 15_000;
 const TRAILING_PEAK_CONFIRM_TOLERANCE = 0.85;
@@ -102,24 +105,6 @@ function computeAdaptiveOorWaitMinutes(position, tracked) {
   if (!Number.isFinite(fee)) return base;
   if (fee >= (config.management.highYieldOorFeePerTvl24h ?? 15)) {
     return Math.max(base ?? 0, config.management.highYieldOorWaitMinutes ?? 90);
-  }
-  return base;
-}
-
-function computeAdaptiveMinFeePerTvl24h(position, tracked) {
-  const base = config.management.minFeePerTvl24h;
-  if (base == null) return null;
-  const volume1h = Number(
-    position?.volume_usd_1h ??
-    position?.volume_1h ??
-    position?.volume_window_1h ??
-    position?.volume_window ??
-    tracked?.volume_window_1h ??
-    tracked?.volume_window_at_deploy
-  );
-  if (!Number.isFinite(volume1h)) return base;
-  if (volume1h >= (config.management.highVolumeFeeThresholdUsdPerHour ?? 20_000)) {
-    return Math.min(base, config.management.highVolumeMinFeePerTvl24h ?? 5);
   }
   return base;
 }
@@ -317,75 +302,10 @@ export async function runManagementCycle({ silent = false } = {}) {
         continue;
       }
 
-      // Sanity-check PnL against tracked initial deposit — API sometimes returns bad data
-      // giving -99% PnL which would incorrectly trigger stop loss.
-      // Safety cap: if suspicious for > 45 min, allow stop-loss anyway to prevent permanent freeze.
-      const SUSPECT_PNL_MAX_SKIP_MS = 45 * 60 * 1000;
-      const tracked = getTrackedPosition(p.position);
-      const pnlSuspect = (() => {
-        if (p.pnl_pct == null) return false;
-        if (p.pnl_pct > -90) return false; // only flag extreme negatives
-        // Cross-check: if we have a tracked deposit and current value isn't near zero, it's bad data
-        if (tracked?.amount_sol && (p.total_value_usd ?? 0) > 0.01) {
-          const now = Date.now();
-          if (!_suspectPnlSince.has(p.position)) _suspectPnlSince.set(p.position, now);
-          const suspectMs = now - _suspectPnlSince.get(p.position);
-          if (suspectMs > SUSPECT_PNL_MAX_SKIP_MS) {
-            log("cron_warn", `Suspect PnL for ${p.pair} exceeded 45min cap — allowing stop-loss rules to prevent freeze`);
-            _suspectPnlSince.delete(p.position);
-            return false;
-          }
-          log("cron_warn", `Suspect PnL for ${p.pair}: ${p.pnl_pct}% but position still has value — skipping PnL rules (${Math.round(suspectMs / 60000)}/${Math.round(SUSPECT_PNL_MAX_SKIP_MS / 60000)}min)`);
-          return true;
-        }
-        // Clear suspect tracking when PnL recovers to normal range
-        _suspectPnlSince.delete(p.position);
-        return false;
-      })();
-
-      // Rule 1: stop loss
-      if (!pnlSuspect && p.pnl_pct != null && p.pnl_pct <= config.management.stopLossPct) {
-        actionMap.set(p.position, { action: "CLOSE", rule: 1, reason: "stop loss" });
-        continue;
-      }
-      // Rule 2: take profit (optional; can be disabled by setting takeProfitFeePct=null)
-      if (!pnlSuspect &&
-          config.management.takeProfitFeePct != null &&
-          p.pnl_pct != null &&
-          p.pnl_pct >= config.management.takeProfitFeePct) {
-        actionMap.set(p.position, { action: "CLOSE", rule: 2, reason: "take profit" });
-        continue;
-      }
-      // Rule 3: pumped far above range
+      // Above-range positions stop earning fees: close on the first verified read.
       if (p.active_bin != null && p.upper_bin != null &&
-          p.active_bin > p.upper_bin + config.management.outOfRangeBinsToClose) {
-        actionMap.set(p.position, { action: "CLOSE", rule: 3, reason: "pumped far above range" });
-        continue;
-      }
-      // Rule 4: stale above range
-      const adaptiveOorWaitMinutes = computeAdaptiveOorWaitMinutes(p, tracked);
-      if (p.active_bin != null && p.upper_bin != null &&
-          p.active_bin > p.upper_bin &&
-          (p.minutes_out_of_range ?? 0) >= adaptiveOorWaitMinutes) {
-        actionMap.set(p.position, { action: "CLOSE", rule: 4, reason: "OOR" });
-        continue;
-      }
-      // Rule 5: fee yield too low
-      // Exit persistent low yield regardless of PnL sign; a bounce is not guaranteed.
-      const adaptiveMinFeePerTvl24h = computeAdaptiveMinFeePerTvl24h(p, tracked);
-      if (!pnlSuspect && p.fee_per_tvl_24h != null &&
-          adaptiveMinFeePerTvl24h != null &&
-          p.fee_per_tvl_24h < adaptiveMinFeePerTvl24h &&
-          (p.age_minutes ?? 0) >= (config.management.minAgeBeforeYieldCheck ?? 240)) {
-        actionMap.set(p.position, { action: "CLOSE", rule: 5, reason: "low yield" });
-        continue;
-      }
-      // Rule 6: EvilPanda chart exit signal — RSI(2)>90 + BB/MACD confluence
-      // Not a hard close — LLM evaluates in context of PnL and position health.
-      // EvilPanda age gate: never exit via chart signal before dump cycle completes (minAgeBeforeClose).
-      const chartSig = chartSignalMap.get(p.position);
-      if (chartSig?.exit_signal && (p.age_minutes ?? 0) >= (config.management.minAgeBeforeClose ?? 240)) {
-        actionMap.set(p.position, { action: "CHART_SIGNAL", rule: 6, reason: chartSig.summary, chartSig });
+          p.active_bin > p.upper_bin) {
+        actionMap.set(p.position, { action: "CLOSE", rule: 3, reason: "above range" });
         continue;
       }
       // Claim rule (optional; disabled when minClaimAmount=null)
@@ -406,14 +326,11 @@ export async function runManagementCycle({ silent = false } = {}) {
       const inRange = p.in_range ? "🟢 IN" : `🔴 OOR ${p.minutes_out_of_range ?? 0}m`;
       const val = config.management.solMode ? `◎${p.total_value_usd ?? "?"}` : `$${p.total_value_usd ?? "?"}`;
       const unclaimed = config.management.solMode ? `◎${p.unclaimed_fees_usd ?? "?"}` : `$${p.unclaimed_fees_usd ?? "?"}`;
-      const statusLabel = act.action === "INSTRUCTION" ? "HOLD (instruction)"
-        : act.action === "CHART_SIGNAL" ? `📊 CHART_SIGNAL`
-        : act.action;
+      const statusLabel = act.action === "INSTRUCTION" ? "HOLD (instruction)" : act.action;
       let line = `**${p.pair}** | Age: ${p.age_minutes ?? "?"}m | Val: ${val} | Unclaimed: ${unclaimed} | PnL: ${p.pnl_pct ?? "?"}% | Yield: ${p.fee_per_tvl_24h ?? "?"}% | ${inRange} | ${statusLabel}`;
       if (p.instruction) line += `\nNote: "${p.instruction}"`;
       if (act.action === "CLOSE" && act.rule === "exit") line += `\n⚡ Trailing TP: ${act.reason}`;
       if (act.action === "CLOSE" && act.rule && act.rule !== "exit") line += `\nRule ${act.rule}: ${act.reason}`;
-      if (act.action === "CHART_SIGNAL") line += `\n📊 ${act.reason}`;
       if (act.action === "CLAIM") line += `\n→ Claiming fees`;
       return line;
     });
@@ -465,10 +382,8 @@ RULES:
 - CLAIM: call claim_fees with position address
 - INSTRUCTION: evaluate the instruction condition. If met → close_position. If not → HOLD, do nothing.
 - ⚡ exit alerts: close immediately, no exceptions
-- CHART_SIGNAL: call get_position_pnl first, then decide per CHART_SIGNAL rules in your system prompt.
 
 Execute the required actions. Do NOT re-evaluate CLOSE/CLAIM — rules already applied. Just execute.
-CHART_SIGNAL requires your judgment — call get_position_pnl then decide.
 After executing, write a brief one-line result per position.
       `, config.llm.maxStepsManager, [], "MANAGER", config.llm.managementModel, config.llm.maxTokens, {
         onToolStart: async ({ name }) => { await liveMessage?.toolStart(name); },
@@ -574,6 +489,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
   }
   timers.screeningLastRun = Date.now();
   log("cron", `Starting screening cycle [model: ${config.llm.screeningModel}]`);
+  const shadowCycleId = `screen-${Date.now()}`;
   try {
     // Reuse pre-fetched balance — no extra RPC call needed
     const currentBalance = preBalance;
@@ -654,9 +570,17 @@ export async function runScreeningCycle({ silent = false } = {}) {
       return true;
     });
     let passing = applyPostReconFilters(allCandidates);
+    passing.sort((a, b) => {
+      const estimate = (item) => estimateNetFeeScenario({ pool: item.pool, amountSol: deployAmount, solPrice: currentBalance.sol_price });
+      return (estimate(b)?.net_before_inventory_usd ?? -Infinity) - (estimate(a)?.net_before_inventory_usd ?? -Infinity);
+    });
 
     if (passing.length === 0) {
       if (process.env.JEV_SHADOW_ENABLED === "true") log("screening", "Jev shadow skipped — no candidates passed screening");
+      logAction({ tool: "screening_decision", args: { cycle_id: shadowCycleId }, result: {
+        candidates: [], rejected: [...earlyFilteredExamples, ...filteredOut].slice(0, 10),
+        choices: [], no_deploy: true,
+      }, success: true });
       const combined = filteredOut.length > 0 ? filteredOut : earlyFilteredExamples;
       const combinedExamples = combined.slice(0, 3)
         .map((entry) => `- ${entry.name}: ${entry.reason}`)
@@ -674,7 +598,6 @@ export async function runScreeningCycle({ silent = false } = {}) {
     ]);
 
     // Join Jev measurements to Luna's real tool choice, without exposing Jev to the agent.
-    const shadowCycleId = `screen-${Date.now()}`;
     const shadowScores = await recordJevShadow(passing.map((candidate, i) => ({
       ...candidate,
       volTrend: volumeTrendResults[i]?.status === "fulfilled" ? volumeTrendResults[i].value : null,
@@ -699,6 +622,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
       const jev = jevByAddress.get(pool.pool);
       const feeRate5m = activityPerFiveMinutes(pool.fee_active_tvl_ratio, pool.discovery_timeframe);
       const volumeRate5m = activityPerFiveMinutes(pool.volume_window, pool.discovery_timeframe);
+      const netScenario = estimateNetFeeScenario({ pool, amountSol: deployAmount, solPrice: currentBalance.sol_price });
 
       // OKX signals
       const okxParts = [
@@ -737,6 +661,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
         jev ? `  jev_advisory_untrusted: fees=${jev.fees.score.toFixed(2)}/2 (${jev.fees.confidence.toFixed(2)} confidence), momentum=${jev.momentum.score.toFixed(2)}/2 (${jev.momentum.confidence.toFixed(2)} confidence), holder_risk=${jev.holder_risk.score.toFixed(2)}/2 (${jev.holder_risk.confidence.toFixed(2)} confidence; higher holder_risk means more concern` : null,
         `  metrics: timeframe=${pool.discovery_timeframe || config.screening.timeframe}, bin_step=${pool.bin_step}, fee_pct=${pool.fee_pct}%, fee_tvl=${pool.fee_active_tvl_ratio}, vol=$${pool.volume_window}, tvl=$${pool.active_tvl}, volatility=${pool.volatility}, mcap=$${pool.mcap}, organic=${pool.organic_score}${pool.token_age_hours != null ? `, age=${pool.token_age_hours}h` : ""}`,
         feeRate5m != null && volumeRate5m != null ? `  comparable_activity_5m: fee_tvl=${feeRate5m.toFixed(4)}%, vol=$${volumeRate5m.toFixed(0)} (window average; check fresh trend)` : null,
+        netScenario ? `  net_scenario_untrusted: 4h fees ~$${netScenario.estimated_fees_4h_usd}, costs ~$${netScenario.estimated_costs_usd}, net before inventory ~$${netScenario.net_before_inventory_usd}, after 5% adverse move ~$${netScenario.net_after_5pct_adverse_move_usd} (uncalibrated; assumes steady fees and half proportional fee capture)` : null,
         `  audit: top10=${top10Pct}%, bots=${botPct}%, fees=${feesSol}SOL${launchpad ? `, launchpad=${launchpad}` : ""}`,
         okxParts ? `  okx: ${okxParts}` : okxUnavailable ? `  okx: unavailable` : null,
         okxTags  ? `  tags: ${okxTags}` : null,
@@ -765,7 +690,7 @@ PRE-LOADED CANDIDATES (${passing.length} pools):
 ${candidateBlocks.join("\n\n")}
 
 STEPS:
-1. Pick the best candidate based on comparable fee activity, current volume trend, risk evidence, then narrative and smart wallets as supporting signals.
+1. Pick the best candidate based on estimated net fee opportunity, current volume trend, risk evidence, then narrative and smart wallets as supporting signals. The net scenario is an uncalibrated ranking aid, not a profit forecast; inventory losses may exceed it.
    - Jev advisory scores are model opinions from supplied metrics. Check them against the raw data; they cannot override risk gates or authorize a deploy.
    - Compare comparable_activity_5m across windows; it is a window average, so confirm current momentum with the 1h volume trend. Do not rank by raw totals across different windows.
    - Prefer pools with vol_trend=up or flat over vol_trend=down.
@@ -840,9 +765,17 @@ IMPORTANT:
       : process.env.DRY_RUN === "true" && /🚀 DEPLOYED|🧪 SIMULATED DEPLOY/i.test(content)
         ? "⛔ NO DEPLOY\n\nNo successful dry-run deploy_position was recorded. Check the action log."
         : content;
-    if (process.env.DRY_RUN === "true" && process.env.JEV_SHADOW_ENABLED === "true") {
-      logAction({ tool: "screening_shadow_outcome", args: { cycle_id: shadowCycleId }, result: {
-        candidate_addresses: passing.map(({ pool }) => pool.pool),
+    {
+      logAction({ tool: "screening_decision", args: { cycle_id: shadowCycleId }, result: {
+        candidates: passing.map(({ pool }) => ({
+          pool_address: pool.pool,
+          base_mint: pool.base?.mint,
+          score: pool.candidate_score,
+          timeframe: pool.discovery_timeframe,
+          fee_tvl_5m_pct: activityPerFiveMinutes(pool.fee_active_tvl_ratio, pool.discovery_timeframe),
+          volume_5m_usd: activityPerFiveMinutes(pool.volume_window, pool.discovery_timeframe),
+          net_scenario: estimateNetFeeScenario({ pool, amountSol: deployAmount, solPrice: currentBalance.sol_price }),
+        })),
         scored_addresses: shadowScores?.map((score) => score.pool_address) ?? [],
         choices: shadowChoices,
         no_deploy: shadowChoices.length === 0,
@@ -904,10 +837,11 @@ Summarize the current portfolio health, total fees earned, and performance of al
     await maybeRunMissedBriefing();
   }, { timezone: 'UTC' });
 
-  // Lightweight 30s PnL poller — updates trailing TP state between management cycles, no LLM
+  // Thirty-second position monitor; refreshes token risk every five minutes.
   const pnlPollInterval = setInterval(async () => {
     if (_modeChanging || _managementBusy || _screeningBusy || _pnlPollBusy) return;
     _pnlPollBusy = true;
+    let screenAfterClose = false;
     try {
       const [result, balance] = await Promise.all([
         getMyPositions({ force: true, silent: true }).catch(() => null),
@@ -920,32 +854,6 @@ Summarize the current portfolio health, total fees earned, and performance of al
           expectedWallet: process.env.SUNSTRIKE_LIVE_WALLET,
           risk: config.risk,
         });
-        if (riskStatus.tripped) {
-          if (Date.now() - _lastBreakerNoticeAt >= 5 * 60_000) {
-            _lastBreakerNoticeAt = Date.now();
-            const lossLabel = Number.isFinite(riskStatus.lpLossUsd) ? `$${riskStatus.lpLossUsd.toFixed(2)}` : "unknown";
-            log("portfolio_risk", `LP loss breaker latched at ${lossLabel} of the $${config.risk.maxCumulativeLossUsd} cap; closing ${result?.positions?.length ?? 0} open position(s).`);
-            if (telegramEnabled()) sendMessage(`⛔ LP loss breaker latched at ${lossLabel} of the $${config.risk.maxCumulativeLossUsd} cap. New entries are locked; open positions are being closed.`).catch(() => {});
-          }
-          const lastAttempt = Date.parse(riskStatus.state?.last_liquidation_attempt_at || "");
-          if (result?.positions?.length && (!Number.isFinite(lastAttempt) || Date.now() - lastAttempt >= 120_000)) {
-            try {
-              markLiquidationAttempt();
-            } catch (error) {
-              log("portfolio_risk_warn", `Could not persist liquidation attempt time: ${error.message}`);
-            }
-            for (const position of result.positions) {
-              const closeResult = await executeTool("close_position", {
-                position_address: position.position,
-                reason: "portfolio loss circuit breaker",
-              });
-              if (closeResult?.success !== true) {
-                log("portfolio_risk_warn", `Breaker close failed for ${position.position.slice(0, 8)}; will retry after the cooldown.`);
-              }
-            }
-          }
-          return;
-        }
         if (!riskStatus.allowed && Date.now() - _lastRiskReadFailureAt >= 5 * 60_000) {
           _lastRiskReadFailureAt = Date.now();
           log("portfolio_risk_warn", `Risk snapshot unavailable; new entries remain blocked: ${riskStatus.reason}`);
@@ -953,6 +861,45 @@ Summarize the current portfolio health, total fees earned, and performance of al
       }
       if (!result?.positions?.length) return;
       for (const p of result.positions) {
+        let tokenStatus = { status: "unknown" };
+        if (p.base_mint) {
+          const cached = _openTokenStatusCache.get(p.base_mint);
+          if (cached && Date.now() - cached.at < 5 * 60_000) tokenStatus = cached.status;
+          else {
+            tokenStatus = await readOpenTokenStatus(p.base_mint);
+            _openTokenStatusCache.set(p.base_mint, { at: Date.now(), status: tokenStatus });
+            logAction({ tool: "open_token_status", args: { mint: p.base_mint }, result: tokenStatus, success: true });
+          }
+        }
+        let closeReason = null;
+        if (tokenStatus.status === "critical") closeReason = `critical token risk: ${tokenStatus.reason}`;
+        else if (p.active_bin != null && p.upper_bin != null && p.active_bin > p.upper_bin) closeReason = "price above LP range";
+        else if (p.active_bin != null && p.lower_bin != null && p.active_bin < p.lower_bin &&
+            (p.minutes_out_of_range ?? 0) >= 240) {
+          const cached = _belowRangeCheckCache.get(p.position);
+          let assessment;
+          if (cached && Date.now() - cached.at < 5 * 60_000) assessment = cached.assessment;
+          else {
+            const [pool1h, volumeTrend] = await Promise.all([
+              getPoolDetail({ pool_address: p.pool, timeframe: "1h" }).catch(() => null),
+              getVolumeTrend(p.pool).catch(() => null),
+            ]);
+            assessment = assessBelowRangeExit({ position: p, tokenStatus, pool1h, volumeTrend, screening: config.screening });
+            _belowRangeCheckCache.set(p.position, { at: Date.now(), assessment });
+            logAction({ tool: "below_range_review", args: { position: p.position, pool: p.pool }, result: assessment, success: true });
+          }
+          if (assessment.close) closeReason = assessment.reason;
+        }
+        if (closeReason) {
+          const lastAttempt = _oorUpAttemptAt.get(p.position) ?? 0;
+          if (Date.now() - lastAttempt >= 60_000) {
+            _oorUpAttemptAt.set(p.position, Date.now());
+            const closed = await executeTool("close_position", { position_address: p.position, reason: closeReason });
+            if (closed?.success === true) screenAfterClose = true;
+            else log("position_exit_warn", `Close failed for ${p.position.slice(0, 8)}; retrying after cooldown`);
+          }
+          continue;
+        }
         if (!p.pnl_pct_suspicious && queuePeakConfirmation(p.position, p.pnl_pct)) {
           schedulePeakConfirmation(p.position);
         }
@@ -980,6 +927,7 @@ Summarize the current portfolio health, total fees earned, and performance of al
       }
     } finally {
       _pnlPollBusy = false;
+      if (screenAfterClose) runScreeningCycle({ silent: true }).catch((error) => log("cron_error", `Post-close screening failed: ${error.message}`));
     }
   }, 30_000);
 

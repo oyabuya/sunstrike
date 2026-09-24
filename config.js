@@ -34,13 +34,12 @@ if (process.env.DRY_RUN === "false") {
 export const config = {
   // ─── Risk Limits ─────────────────────────
   risk: {
-    maxPositions:    u.maxPositions    ?? 1,
+    maxPositions:    u.maxPositions    ?? 2,
     maxDeployAmount: u.maxDeployAmount ?? 50,
     // Owner policy for the restart canary. These limits are never agent-tunable.
     capitalBudgetUsd: 100,
-    maxCumulativeLossUsd: 20,
-    maxPositionUsd: 20,
-    maxConcurrentExposureUsd: 20,
+    maxPositionUsd: 50,
+    maxConcurrentExposureUsd: 85,
     minimumLiquidReserveUsd: 15,
   },
 
@@ -50,7 +49,7 @@ export const config = {
     minTvl:            u.minTvl            ?? 10_000,
     maxTvl:            u.maxTvl            ?? 150_000,
     minVolume:         u.minVolume         ?? 500,
-    minOrganic:        u.minOrganic        ?? 60,
+    minOrganic:        80,
     minHolders:        u.minHolders        ?? 500,
     minMcap:           u.minMcap           ?? 250_000, // EvilPanda: $250k MC minimum
     maxMcap:           u.maxMcap           ?? 20_000_000,
@@ -67,8 +66,8 @@ export const config = {
     requireRenouncedMint: u.requireRenouncedMint ?? true, // require LP/mint authority renounced when GMGN data exists
     antiRugStrict:     u.antiRugStrict     ?? true, // enable strict anti-rug hard gates in screening + executor
     blockedLaunchpads:  u.blockedLaunchpads  ?? [],  // e.g. ["letsbonk.fun", "pump.fun"]
- minTokenAgeHours: u.minTokenAgeHours ?? 12, // skip tokens < 12h old (evolved: was 2h — too young, dump-prone)
-    maxTokenAgeHours: u.maxTokenAgeHours ?? null, // no upper age limit; minimum age still applies
+    minTokenAgeHours: 12,
+    maxTokenAgeHours: null,
     athFilterPct: u.athFilterPct ?? -15, // skip jika harga > 85% dari ATH (evolved: was -20 — stricter, avoid ATH dumps)
     maxVolatility: u.maxVolatility ?? 4.0, // max pool volatility score (evolved: was 5 — mid-vol 2-4 often fakeout)
     minVolChangePct: u.minVolChangePct ?? 0, // flag falling volume; severe declines remain filtered
@@ -85,14 +84,14 @@ export const config = {
     oorCooldownHours: u.oorCooldownHours ?? 8, // evolved: was 12 — cooldown lebih pendek
     poolCooldownHours: u.poolCooldownHours ?? 4, // NEW: no redeploy ke pool sama dlm 4h (lindungin dari dump cycle)
     minVolumeToRebalance: u.minVolumeToRebalance ?? 1000,
-    stopLossPct: u.stopLossPct ?? u.emergencyPriceDropPct ?? -80, // Circuit breaker only — EvilPanda uses chart judgment, not % stop loss. This prevents total loss from bugs/data errors.
+    stopLossPct: null, // Price/IL drawdown alone is not a close trigger.
     // allow explicit null to disable hard take-profit closes
-    takeProfitFeePct: u.takeProfitFeePct !== undefined ? u.takeProfitFeePct : 5,
-    minFeePerTvl24h: u.minFeePerTvl24h ?? 7,
+    takeProfitFeePct: null, // Hold while in range and earning fees.
+    minFeePerTvl24h: null, // Low historical yield alone is not an exit.
     minAgeBeforeYieldCheck: u.minAgeBeforeYieldCheck ?? 240, // EvilPanda: fee needs 4h+ to accumulate before yield-based exit
-    minAgeBeforeClose:     u.minAgeBeforeClose     ?? 240, // EvilPanda: never close <4h unless stop loss — wait for dump cycle
+    minAgeBeforeClose:     u.minAgeBeforeClose     ?? 240, // Legacy chart-exit age gate; critical risk and upper OOR are immediate.
     minSolToOpen:          u.minSolToOpen          ?? 0.55,
-    deployAmountSol:       u.deployAmountSol       ?? 0.5,
+    deployAmountSol:       u.deployAmountSol       ?? 0.2,
     gasReserve:            u.gasReserve            ?? 0.2,
     // Non-refundable rent paid when a position uses bin ranges never created before.
     // Meteora charges ~0.075 SOL per binArray account. A typical position spans 1-2 binArrays.
@@ -108,7 +107,7 @@ export const config = {
     autoCompoundBalanceStepSol:  u.autoCompoundBalanceStepSol  ?? 0.02,
     autoCompoundDeployStepSol:   u.autoCompoundDeployStepSol   ?? 0.01,
     // Trailing take-profit — DISABLED per EvilPanda: not part of the strategy, causes paper-handing
-    trailingTakeProfit:    u.trailingTakeProfit    ?? false,
+    trailingTakeProfit:    false, // Owner policy: hold while in range and earning fees.
     trailingTriggerPct:    u.trailingTriggerPct    ?? 3,    // activate trailing at X% PnL
     trailingDropPct:       u.trailingDropPct       ?? 1.5,  // close when drops X% from peak
     highYieldTrailingFeePerTvl24h: u.highYieldTrailingFeePerTvl24h ?? 20,
@@ -182,7 +181,7 @@ export function assertLiveConfiguration() {
   if (!process.env.HELIUS_API_KEY) missing.push("HELIUS_API_KEY");
   if (!process.env.JUPITER_API_KEY) missing.push("JUPITER_API_KEY");
   if (!(process.env.OPENROUTER_API_KEY || process.env.LLM_API_KEY)) missing.push("OPENROUTER_API_KEY");
-  if (config.risk.maxPositions !== 1) missing.push("maxPositions=1");
+  if (config.risk.maxPositions !== 2) missing.push("maxPositions=2");
   if (config.strategy.strategy !== "spot") missing.push("strategy=spot");
   if (config.management.autoCompoundEnabled !== false) missing.push("autoCompoundEnabled=false");
   if (config.screening.antiRugStrict !== true) missing.push("antiRugStrict=true");
@@ -217,16 +216,20 @@ if (process.env.DRY_RUN === "false") assertLiveConfiguration();
  *   4.0 SOL wallet → 1.33 SOL deploy
  */
 export function computeDeployAmount(walletSol, solPrice = null) {
+  if (!Number.isFinite(walletSol) || walletSol <= 0) return 0;
+  const reserve = (config.management.gasReserve ?? 0.2)
+    + (config.management.binArrayRentBuffer ?? 0.15);
+  const fixedAmount = config.management.deployAmountSol;
+  if (config.management.autoCompoundEnabled === false) {
+    if (!Number.isFinite(fixedAmount) || fixedAmount <= 0 || walletSol < fixedAmount + reserve ||
+        (Number.isFinite(solPrice) && solPrice > 0 && fixedAmount * solPrice > config.risk.maxPositionUsd)) return 0;
+    return fixedAmount;
+  }
   if (Number.isFinite(solPrice) && solPrice > 0) {
-    const reserve = (config.management.gasReserve ?? 0.2)
-      + (config.management.binArrayRentBuffer ?? 0.15);
     const deployableSol = Math.max(0, walletSol - reserve);
     const budgetSol = config.risk.maxPositionUsd / solPrice;
     return Math.floor(Math.min(deployableSol, budgetSol) * 1000) / 1000;
   }
-  if (!Number.isFinite(walletSol) || walletSol <= 0) return 0;
-  const reserve  = (config.management.gasReserve ?? 0.2)
-                 + (config.management.binArrayRentBuffer ?? 0.15);
   const pct      = config.management.positionSizePct ?? 0.35;
   const floor    = config.management.deployAmountSol;
   const ceil     = config.risk.maxDeployAmount;
@@ -265,7 +268,6 @@ export function reloadScreeningThresholds() {
     const fresh = JSON.parse(fs.readFileSync(USER_CONFIG_PATH, "utf8"));
     const s = config.screening;
     if (fresh.minFeeActiveTvlRatio != null) s.minFeeActiveTvlRatio = fresh.minFeeActiveTvlRatio;
-    if (fresh.minOrganic     != null) s.minOrganic     = fresh.minOrganic;
     if (fresh.minHolders     != null) s.minHolders     = fresh.minHolders;
     if (fresh.minMcap        != null) s.minMcap        = fresh.minMcap;
     if (fresh.maxMcap        != null) s.maxMcap        = fresh.maxMcap;
@@ -276,8 +278,6 @@ export function reloadScreeningThresholds() {
     if (fresh.maxBinStep     != null) s.maxBinStep     = fresh.maxBinStep;
     if (fresh.timeframe         != null) s.timeframe         = fresh.timeframe;
     if (fresh.category          != null) s.category          = fresh.category;
- if (fresh.minTokenAgeHours !== undefined) s.minTokenAgeHours = fresh.minTokenAgeHours;
-  if (fresh.maxTokenAgeHours !== undefined) s.maxTokenAgeHours = fresh.maxTokenAgeHours;
   if (fresh.athFilterPct !== undefined) s.athFilterPct = fresh.athFilterPct;
   if (fresh.maxVolatility != null) s.maxVolatility = fresh.maxVolatility;
   if (fresh.minVolChangePct != null) s.minVolChangePct = fresh.minVolChangePct;

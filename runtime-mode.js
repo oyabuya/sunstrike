@@ -25,5 +25,5 @@ export async function switchRuntimeMode(mode, dependencies = {}) {
     throw new Error('Saldo SOL/reserve belum cukup untuk LIVE');
   }
   process.env.DRY_RUN = 'false';
-  return 'LIVE aktif. Batas posisi $20, satu posisi, loss breaker $20. Screening mengikuti jadwal. /dry_run untuk simulasi; /mode untuk status.';
+  return 'LIVE aktif. Maksimum dua posisi, masing-masing 0,2 SOL. Tidak ada batas rugi portofolio otomatis. Screening mengikuti jadwal. /dry_run untuk simulasi; /mode untuk status.';
 }

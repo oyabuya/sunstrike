@@ -37,18 +37,15 @@ export function initializePortfolioRiskState({ balance, positions, expectedWalle
   if (!expectedWallet || balance?.wallet !== expectedWallet) {
     throw new Error("risk state initialization wallet does not match the explicitly configured dedicated wallet");
   }
-  const { capitalBudgetUsd, maxCumulativeLossUsd, maxPositionUsd, maxConcurrentExposureUsd, minimumLiquidReserveUsd, maxPositions } = risk || {};
-  if (maxPositions !== 1 || ![capitalBudgetUsd, maxCumulativeLossUsd, maxPositionUsd, maxConcurrentExposureUsd, minimumLiquidReserveUsd].every(Number.isFinite) ||
-      capitalBudgetUsd <= 0 || maxCumulativeLossUsd <= 0 || maxPositionUsd <= 0 || maxConcurrentExposureUsd <= 0 || minimumLiquidReserveUsd < 0) {
+  const { capitalBudgetUsd, maxPositionUsd, maxConcurrentExposureUsd, minimumLiquidReserveUsd, maxPositions } = risk || {};
+  if (maxPositions !== 2 || ![capitalBudgetUsd, maxPositionUsd, maxConcurrentExposureUsd, minimumLiquidReserveUsd].every(Number.isFinite) ||
+      capitalBudgetUsd <= 0 || maxPositionUsd <= 0 || maxConcurrentExposureUsd <= 0 || minimumLiquidReserveUsd < 0) {
     throw new Error("live USD risk policy is invalid");
   }
   const target = statePath || DEFAULT_STATE_PATH;
   if (fs.existsSync(target)) throw new Error("portfolio risk state already exists; refusing to reset or overwrite its loss history");
   const snapshot = buildPortfolioSnapshot(balance, positions, now);
   if (snapshot.positions !== 0) throw new Error("risk state must be initialized with no open LP positions");
-  if (capitalBudgetUsd - snapshot.equity_usd >= maxCumulativeLossUsd) {
-    throw new Error("initial equity is already at or below the portfolio loss limit");
-  }
   const state = {
     version: 1,
     wallet: expectedWallet,
@@ -109,9 +106,9 @@ export function checkPortfolioRisk({ balance, positions, expectedWallet, risk, s
   if (!expectedWallet || balance?.wallet !== expectedWallet) {
     return { allowed: false, reason: "live wallet does not match the explicitly configured dedicated wallet" };
   }
-  const { capitalBudgetUsd, maxCumulativeLossUsd, maxPositionUsd, maxConcurrentExposureUsd, minimumLiquidReserveUsd, maxPositions } = risk || {};
-  if (maxPositions !== 1 || ![capitalBudgetUsd, maxCumulativeLossUsd, maxPositionUsd, maxConcurrentExposureUsd, minimumLiquidReserveUsd].every(Number.isFinite) ||
-      capitalBudgetUsd <= 0 || maxCumulativeLossUsd <= 0 || maxPositionUsd <= 0 || maxConcurrentExposureUsd <= 0 || minimumLiquidReserveUsd < 0) {
+  const { capitalBudgetUsd, maxPositionUsd, maxConcurrentExposureUsd, minimumLiquidReserveUsd, maxPositions } = risk || {};
+  if (maxPositions !== 2 || ![capitalBudgetUsd, maxPositionUsd, maxConcurrentExposureUsd, minimumLiquidReserveUsd].every(Number.isFinite) ||
+      capitalBudgetUsd <= 0 || maxPositionUsd <= 0 || maxConcurrentExposureUsd <= 0 || minimumLiquidReserveUsd < 0) {
     return { allowed: false, reason: "live USD risk policy is invalid" };
   }
 
@@ -124,17 +121,8 @@ export function checkPortfolioRisk({ balance, positions, expectedWallet, risk, s
     return { allowed: false, reason: error.message };
   }
   const lpLossUsd = Math.max(0, Math.max(capitalBudgetUsd, state.initial_snapshot.equity_usd) - snapshot.equity_usd);
-  if (!state.tripped && lpLossUsd >= maxCumulativeLossUsd) {
-    state.tripped = true;
-    state.tripped_at = new Date(now).toISOString();
-    state.trip_reason = "cumulative portfolio loss reached the configured limit";
-  }
   state.last_snapshot = { ...snapshot, lp_loss_usd: lpLossUsd };
   writeState(state, statePath);
-
-  if (state.tripped) {
-    return { allowed: false, tripped: true, snapshot, lpLossUsd, state, reason: "portfolio loss circuit breaker is latched" };
-  }
   if (snapshot.open_exposure_usd > maxConcurrentExposureUsd + 0.01) {
     return { allowed: false, snapshot, lpLossUsd, reason: "current LP exposure exceeds the approved concurrent exposure limit" };
   }
@@ -180,13 +168,5 @@ export function markExternalCostAccountingIncomplete(model, { expectedWallet = p
   state.external_cost_accounting_complete = false;
   state.unmetered_model = model || "unknown";
   state.last_external_cost_at = new Date().toISOString();
-  writeState(state, target);
-}
-
-export function markLiquidationAttempt({ statePath, at = new Date().toISOString() } = {}) {
-  const target = statePath || DEFAULT_STATE_PATH;
-  if (!fs.existsSync(target)) return;
-  const state = JSON.parse(fs.readFileSync(target, "utf8"));
-  state.last_liquidation_attempt_at = at;
   writeState(state, target);
 }

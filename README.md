@@ -148,7 +148,7 @@ SUNSTRIKE_LIVE_ENABLED=false
 
 For the September 2026 restart, use a new dedicated wallet. Put its private key only in the VPS `.env`, restrict that file to the service account (`chmod 600 .env`), and never send the key in chat. Sunstrike derives the public address from that key; `SUNSTRIKE_LIVE_WALLET` is optional and, when set, must match it. `OPENROUTER_API_KEY` is for model analysis and tool decisions; it cannot by itself trade. The `RPC_URL` and `HELIUS_API_KEY` support wallet/chain reads, while `JUPITER_API_KEY` supports post-close swaps. Telegram credentials are needed for bot reports and control. `LPAGENT_API_KEY` and `GMGN_API_KEY` are optional enrichment; GMGN additionally needs `gmgn-cli`. Check the provider model slug and tool-call behavior before relying on the agent. The current default is `openai/gpt-4.1-mini`.
 
-The owner set a **$100 starting capital** and **$20 maximum total test loss**. Live entry requires a wallet-bound risk ledger and fresh wallet/position snapshots; the code blocks entry on a missing, stale, mismatched, or over-limit snapshot. Keep both live flags off until the funded wallet is verified, the ledger is initialized, and the remaining live checks pass. The circuit breaker cannot guarantee a fill or cap losses during provider outages or rapid price moves.
+The owner set a **$100 planning capital**, accepts the possibility of losing it all, and removed the former $20 portfolio loss breaker. At most two LP positions may be open, with an exact 0.2 SOL entry each. Entry requires token age of at least 12 hours and a fresh Jupiter Organic Score of at least 80; there is no maximum age. Live entry still requires a wallet-bound ledger and fresh wallet/position snapshots; missing, stale, mismatched, or over-limit snapshots block new entries. Positions stay open while in range and earning fees, regardless of unrealized drawdown. A fresh critical token-risk flag or a move above range triggers immediate close; a move below range is reviewed after four hours using token health, volume, and fees. There is no automatic pause after two losing closes. Automated close cannot guarantee a fill during provider outages or rapid price moves.
 
 For a low-cost model trial, set `managementModel`, `screeningModel`, and `generalModel` to `openai/gpt-6-luna` in `user-config.json`. It is newly released and must pass an authenticated dry-run tool-call and report-format check before use for decisions. The code's fallback model is `openai/gpt-4.1-mini`; unlike the primary model, the fallback is only attempted for certain transient provider errors. Monitor actual OpenRouter usage and report accuracy rather than assuming the model price alone makes the strategy profitable.
 
@@ -458,7 +458,7 @@ All fields are optional — defaults shown. Edit `user-config.json`.
 | `minTvl` | `10000` | Minimum pool TVL (USD) |
 | `maxTvl` | `150000` | Maximum pool TVL (USD) |
 | `minVolume` | `500` | Minimum pool volume |
-| `minOrganic` | `60` | Minimum organic score (0–100) |
+| `minOrganic` | `80` | Minimum Jupiter Organic Score (0–100) |
 | `minHolders` | `500` | Minimum token holder count |
 | `minMcap` | `250000` | Minimum market cap (USD) |
 | `maxMcap` | `20000000` | Maximum market cap (USD) |
@@ -658,8 +658,8 @@ The authors are not responsible for any losses incurred through use of this soft
 Authorized Telegram users can send `/mode`, `/dry_run`, or `/live` directly.
 `/live` requires `SUNSTRIKE_LIVE_ENABLED=true`, Helius/Jupiter credentials, a
 wallet-bound portfolio ledger, a fresh wallet/LP snapshot, sufficient SOL, and
-an untripped loss breaker. Initialize the ledger once using
-`DRY_RUN=true node scripts/init-portfolio-risk.js`; never delete it to reset losses.
+a fresh, wallet-bound risk ledger. Initialize the ledger once using
+`DRY_RUN=true node scripts/init-portfolio-risk.js`; keep it for wallet reconciliation.
 Busy or expired mode commands are rejected; resend after the operation finishes.
 Mode changes last for the current process. Restart follows `.env` (keep
 `DRY_RUN=true` for a safe restart). `/dry_run` does not close existing positions
@@ -668,4 +668,4 @@ and suspends real management transactions. The VPS service template is
 
 GMGN and OKX are optional risk enrichment, as in the April flow. A current
 matching-mint Jupiter audit is mandatory; any adverse GMGN/OKX signal received
-still blocks deployment. The portfolio loss breaker remains mandatory.
+still blocks deployment. The portfolio ledger remains mandatory for wallet reconciliation and entry limits.
