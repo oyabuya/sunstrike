@@ -532,6 +532,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
     }
     if (prePositions.total_positions >= config.risk.maxPositions) {
       log("cron", `Screening skipped — max positions reached (${prePositions.total_positions}/${config.risk.maxPositions})`);
+      if (process.env.JEV_SHADOW_ENABLED === "true") log("screening", "Jev shadow skipped — position limit reached");
       screenReport = `Screening skipped — max positions reached (${prePositions.total_positions}/${config.risk.maxPositions}).`;
       _screeningBusy = false;
       return screenReport;
@@ -643,6 +644,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
     let passing = applyPostReconFilters(allCandidates);
 
     if (passing.length === 0) {
+      if (process.env.JEV_SHADOW_ENABLED === "true") log("screening", "Jev shadow skipped — no candidates passed screening");
       const combined = filteredOut.length > 0 ? filteredOut : earlyFilteredExamples;
       const combinedExamples = combined.slice(0, 3)
         .map((entry) => `- ${entry.name}: ${entry.reason}`)
