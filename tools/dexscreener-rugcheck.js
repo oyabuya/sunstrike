@@ -175,13 +175,110 @@ function _mapDexScreenerPairs(mint, pairs) {
 
 /**
  * Get token security audit report from RugCheck.xyz.
- * Checks: mint authority, freeze authority, LP lock/burn, top holders,
- * supply distribution, risk score, insider networks.
+ * Reports mint/freeze authority, holder and locker data, and risk scores.
  * Free API — no key required.
  *
  * @param {string} mint - Token mint address
- * @returns {{ mint, risk_score, risk_level, mint_authority_disabled, freeze_authority_disabled, lp_locked, top_holders, warnings }}
+ * @returns {{ mint, risk_score, risk_score_raw, risk_level, mint_authority_disabled, freeze_authority_disabled, lp_lock_entries_present, risks }}
  */
+function finiteScore(value) {
+  if (value == null || value === "") return null;
+  const score = Number(value);
+  return Number.isFinite(score) && score >= 0 ? score : null;
+}
+
+function authority(data, token, key) {
+  const source = Object.hasOwn(data, key) ? data : token;
+  if (!Object.hasOwn(source, key) || source[key] === undefined) return { disabled: null, value: null };
+  const value = source[key];
+  const disabled = value === null || String(value).toLowerCase() === "null";
+  return { disabled, value: disabled ? null : value };
+}
+
+export function parseRugCheckReport(data, mint) {
+  if (!data || typeof data !== "object" || data.token?.mint !== mint) {
+    return { mint, error: "RugCheck report mint is missing or mismatched", risk_level: "unknown" };
+  }
+    // RugCheck exposes separate raw and normalised scores. Only the latter
+    // can be compared with 0–100 risk bands; lower means less reported risk.
+    const normalisedScore = finiteScore(data.score_normalised);
+    const score = normalisedScore != null && normalisedScore <= 100 ? normalisedScore : null;
+    const rawScore = finiteScore(data.score);
+    const risks = Array.isArray(data.risks) ? data.risks : [];
+    const topHolders = Array.isArray(data.topHolders) ? data.topHolders : null;
+    const token = data.token;
+    const tokenMeta = data.tokenMeta || {};
+    const lockers = data.lockers && typeof data.lockers === "object" && !Array.isArray(data.lockers)
+      ? data.lockers : null;
+    const rugged = typeof data.rugged === "boolean" ? data.rugged : null;
+
+    let riskLevel = "unknown";
+    if (score != null) {
+      if (score >= 80) riskLevel = "danger";
+      else if (score >= 50) riskLevel = "warning";
+      else if (score >= 20) riskLevel = "caution";
+      else riskLevel = "safe";
+    }
+    if (risks.some(r => /^(critical|severe|danger)$/i.test(String(r?.level ?? r?.severity ?? "")))) {
+      riskLevel = "danger";
+    }
+    if (rugged === true) riskLevel = "rugged";
+
+    const mintAuth = authority(data, token, "mintAuthority");
+    const freezeAuth = authority(data, token, "freezeAuthority");
+
+    // Locks may belong to other markets, not necessarily the DLMM pool under review.
+    const lockerEntries = lockers ? Object.entries(lockers) : [];
+    const lpLockDetails = lockerEntries.map(([addr, info]) => ({
+      locker: addr,
+      amount: info?.amount ?? info?.lockedAmount ?? null,
+      lock_type: info?.type ?? info?.lockType ?? null,
+      expires: info?.lockExpiry ?? info?.unlockTime ?? null,
+    }));
+
+    // Unknown holders cannot become 0% concentration. Labels are too weak to
+    // reliably exclude vaults, so this remains an unadjusted advisory total.
+    const holderShares = topHolders?.slice(0, 10).map(h => finiteScore(h?.percentage ?? h?.pct)) ?? null;
+    const top10Pct = holderShares?.length === 10 && holderShares.every(v => v != null)
+      ? Number(holderShares.reduce((sum, value) => sum + value, 0).toFixed(2)) : null;
+
+    // Mapped risks/warnings
+    const warnings = risks.slice(0, 15).map(r => ({
+      level: r?.level || r?.severity || "info",
+      name: r?.name || r?.type || "",
+      description: r?.description || r?.message || "",
+      value: r?.value ?? null,
+    }));
+
+    // Total market liquidity across all markets
+    const totalMarketLiquidity = data.totalMarketLiquidity ?? null;
+
+    return {
+      mint,
+      name: tokenMeta.name ?? data.name ?? "",
+      symbol: tokenMeta.symbol ?? data.symbol ?? "",
+      rugged,
+      risk_score: score,
+      risk_score_raw: rawScore,
+      risk_level: riskLevel,
+      mint_authority_disabled: mintAuth.disabled,
+      freeze_authority_disabled: freezeAuth.disabled,
+      mint_authority: mintAuth.value,
+      freeze_authority: freezeAuth.value,
+      lp_locked: null,
+      lp_lock_entries_present: lockers ? lockerEntries.length > 0 : null,
+      lp_lock_details: lpLockDetails.length > 0 ? lpLockDetails : null,
+      total_market_liquidity: totalMarketLiquidity != null ? parseFloat(totalMarketLiquidity) : null,
+      total_holders: data.totalHolders ?? null,
+      top_10_holder_pct: top10Pct,
+      decimals: token.decimals ?? tokenMeta.decimals ?? null,
+      transfer_fee_pct: data.transferFee?.pct ?? null,
+      risk_count: risks.length,
+      risks: warnings,
+      price: data.price ?? null,
+    };
+}
+
 export async function getRugCheckReport({ mint }) {
   if (!mint) return { error: "mint is required" };
 
@@ -190,97 +287,14 @@ export async function getRugCheckReport({ mint }) {
   if (cached !== undefined) return cached;
 
   try {
-    const res = await ftch(`https://api.rugcheck.xyz/v1/tokens/${mint}/report`);
+    const res = await ftch(`https://api.rugcheck.xyz/v1/tokens/${encodeURIComponent(mint)}/report`);
     if (!res.ok) {
       log("rugcheck", `API error for ${mint.slice(0, 8)}: ${res.status}`);
       return cacheSet(key, { mint, error: `HTTP ${res.status}`, risk_level: "unknown" });
     }
-    const data = await res.json();
+    const result = parseRugCheckReport(await res.json(), mint);
 
-    // RugCheck response: score (lower = safer), risks array, topHolders
-    const score = data.score ?? data.score_normalised ?? null;
-    const risks = Array.isArray(data.risks) ? data.risks : [];
-    const topHolders = Array.isArray(data.topHolders) ? data.topHolders : [];
-    const token = data.token || {};
-    const tokenMeta = data.tokenMeta || {};
-    const lockers = data.lockers || {};
-    const rugged = data.rugged ?? false;
-
-    // Risk level derivation from score
-    let riskLevel = "ok";
-    if (score != null) {
-      if (score >= 80) riskLevel = "danger";
-      else if (score >= 50) riskLevel = "warning";
-      else if (score >= 20) riskLevel = "caution";
-      else riskLevel = "safe";
-    }
-    if (rugged) riskLevel = "rugged";
-    if (risks.some(r => /critical|severe|danger/i.test(r.level || r.type || r.name || ""))) {
-      riskLevel = "danger";
-    }
-
-    // Mint/freeze authority
-    const mintAuth = data.mintAuthority ?? token.mintAuthority ?? null;
-    const freezeAuth = data.freezeAuthority ?? token.freezeAuthority ?? null;
-    const mintDisabled = mintAuth === null || mintAuth === undefined ||
-                         String(mintAuth).toLowerCase() === "null";
-    const freezeDisabled = freezeAuth === null || freezeAuth === undefined ||
-                           String(freezeAuth).toLowerCase() === "null";
-
-    // LP lock detection
-    const lockerEntries = Object.entries(lockers);
-    const lpLocked = lockerEntries.length > 0;
-    const lpLockDetails = lockerEntries.map(([addr, info]) => ({
-      locker: addr,
-      amount: info.amount ?? info.lockedAmount ?? null,
-      lock_type: info.type ?? info.lockType ?? null,
-      expires: info.lockExpiry ?? info.unlockTime ?? null,
-    }));
-
-    // Top holder concentration (exclude pools/programs)
-    const excludePattern = /pool|raydium|orca|meteora|jupiter|program|vault|authority|market|lending|dex/i;
-    const realHolders = topHolders.filter(h =>
-      !excludePattern.test((h.name || h.label || h.tag || h.type || "").toLowerCase())
-    );
-    const top10Pct = realHolders.slice(0, 10).reduce(
-      (sum, h) => sum + (Number(h.percentage) || Number(h.pct) || 0), 0
-    );
-
-    // Mapped risks/warnings
-    const warnings = risks.slice(0, 15).map(r => ({
-      level: r.level || r.severity || "info",
-      name: r.name || r.type || "",
-      description: r.description || r.message || "",
-      value: r.value ?? null,
-    }));
-
-    // Total market liquidity across all markets
-    const totalMarketLiquidity = data.totalMarketLiquidity ?? null;
-
-    const result = {
-      mint,
-      name: tokenMeta.name ?? data.name ?? "",
-      symbol: tokenMeta.symbol ?? data.symbol ?? "",
-      rugged,
-      risk_score: score != null ? Number(score) : null,
-      risk_level: riskLevel,
-      mint_authority_disabled: mintDisabled,
-      freeze_authority_disabled: freezeDisabled,
-      mint_authority: mintDisabled ? null : mintAuth,
-      freeze_authority: freezeDisabled ? null : freezeAuth,
-      lp_locked: lpLocked,
-      lp_lock_details: lpLockDetails.length > 0 ? lpLockDetails : null,
-      total_market_liquidity: totalMarketLiquidity != null ? parseFloat(totalMarketLiquidity) : null,
-      total_holders: data.totalHolders ?? null,
-      top_10_holder_pct: parseFloat(top10Pct.toFixed(2)),
-      decimals: token.decimals ?? tokenMeta.decimals ?? null,
-      transfer_fee_pct: data.transferFee?.pct ?? 0,
-      risk_count: risks.length,
-      risks: warnings,
-      price: data.price ?? null,
-    };
-
-    log("rugcheck", `Report ${mint.slice(0, 8)}: risk=${riskLevel}, score=${score}, risks=${risks.length}`);
+    log("rugcheck", `Report ${mint.slice(0, 8)}: risk=${result.risk_level}, score_normalised=${result.risk_score ?? "unknown"}, risks=${result.risk_count ?? "unknown"}`);
     return cacheSet(key, result);
   } catch (e) {
     log("rugcheck", `Fetch error for ${mint.slice(0, 8)}: ${e.message}`);

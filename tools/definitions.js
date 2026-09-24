@@ -1115,14 +1115,15 @@ This is a free endpoint — no API key required.`,
     function: {
       name: "get_rugcheck_report",
       description: `Get a security audit report for a token from RugCheck.xyz.
-Checks: mint authority status, freeze authority, LP lock/burn, top holder
-concentration, supply distribution, and overall risk score.
+Checks: mint/freeze authority, reported locker entries, holder concentration,
+and separate raw/normalised risk scores. Missing fields remain unknown.
 
-Risk levels: 'safe', 'warning', 'danger', 'ok'
+Risk levels: 'safe', 'caution', 'warning', 'danger', 'rugged', 'unknown'.
+The score alone is not proof of a rug or a reason to close an LP.
 
 Use as a secondary security layer alongside GMGN token security data.
 GMGN checks bundler/rat-trader exposure; RugCheck checks on-chain
-authority and LP lock status — they complement each other.
+authority and reported locker data — they complement each other.
 
 Free API — no key required.`,
       parameters: {
