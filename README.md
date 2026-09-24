@@ -655,6 +655,15 @@ The authors are not responsible for any losses incurred through use of this soft
 
 ### Telegram runtime mode
 
+The operator chat has a Telegram command menu. `/start` or `/help` shows usage.
+`/status` and `/check` read the current mode, wallet and positions; `/candidates`,
+`/candidat`, and `/refresh` refresh the candidate list without deploying.
+`/positions` lists positions, `/thresholds` shows screening limits, and `/briefing`
+shows the daily report. `/evolve` can change learned screening thresholds after
+five closed positions; owner hard limits remain enforced. `/close 1` closes the
+first current position in LIVE and uses the normal post-close swap path.
+Unknown slash commands return `/help` instead of being sent to the model.
+
 Authorized Telegram users can send `/mode`, `/dry_run`, or `/live` directly.
 `/live` requires `SUNSTRIKE_LIVE_ENABLED=true`, Helius/Jupiter credentials, a
 wallet-bound portfolio ledger, a fresh wallet/LP snapshot, sufficient SOL, and

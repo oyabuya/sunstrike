@@ -49,7 +49,7 @@ export const config = {
     minTvl:            u.minTvl            ?? 10_000,
     maxTvl:            u.maxTvl            ?? 150_000,
     minVolume:         u.minVolume         ?? 500,
-    minOrganic:        80,
+    minOrganic:        Math.max(80, Number(u.minOrganic) || 80),
     minHolders:        u.minHolders        ?? 500,
     minMcap:           u.minMcap           ?? 250_000, // EvilPanda: $250k MC minimum
     maxMcap:           u.maxMcap           ?? 20_000_000,
@@ -268,6 +268,7 @@ export function reloadScreeningThresholds() {
     const fresh = JSON.parse(fs.readFileSync(USER_CONFIG_PATH, "utf8"));
     const s = config.screening;
     if (fresh.minFeeActiveTvlRatio != null) s.minFeeActiveTvlRatio = fresh.minFeeActiveTvlRatio;
+    if (Number.isFinite(Number(fresh.minOrganic))) s.minOrganic = Math.max(80, Number(fresh.minOrganic));
     if (fresh.minHolders     != null) s.minHolders     = fresh.minHolders;
     if (fresh.minMcap        != null) s.minMcap        = fresh.minMcap;
     if (fresh.maxMcap        != null) s.maxMcap        = fresh.maxMcap;

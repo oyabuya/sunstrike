@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { log } from "./logger.js";
+import { TELEGRAM_COMMANDS } from "./telegram-commands.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const USER_CONFIG_PATH = path.join(__dirname, "user-config.json");
@@ -332,8 +333,36 @@ export function startPolling(onMessage) {
   if (!TOKEN || _polling) return;
   _pollingStartedAt = Math.floor(Date.now() / 1000);
   _polling = true;
+  if (chatId) {
+    fetch(`${BASE}/setMyCommands`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        commands: TELEGRAM_COMMANDS,
+        scope: { type: "chat", chat_id: chatId },
+      }),
+    }).then(async (res) => {
+      const result = await res.json();
+      if (!res.ok || result.ok !== true) log("telegram_error", `setMyCommands ${res.status}: ${String(result.description || "unknown error").slice(0, 200)}`);
+      else log("telegram", "Command menu registered for operator chat");
+    }).catch((error) => log("telegram_error", `setMyCommands failed: ${error.message}`));
+    if (/^[1-9]\d*$/.test(String(chatId))) {
+      fetch(`${BASE}/setChatMenuButton`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chat_id: Number(chatId), menu_button: { type: "commands" } }),
+      }).then(async (res) => {
+        const result = await res.json();
+        if (!res.ok || result.ok !== true) log("telegram_error", `setChatMenuButton ${res.status}: ${String(result.description || "unknown error").slice(0, 200)}`);
+      }).catch((error) => log("telegram_error", `setChatMenuButton failed: ${error.message}`));
+    }
+  }
   poll(onMessage); // fire-and-forget
   log("telegram", "Bot polling started");
+  if (chatId) {
+    sendMessage(`☀️ Sunstrike siap · ${process.env.DRY_RUN === "true" ? "DRY_RUN" : "LIVE"}. Buka menu perintah atau kirim /help. /check untuk status terbaru.`)
+      .catch((error) => log("telegram_error", `Ready message failed: ${error.message}`));
+  }
 }
 
 export function stopPolling() {

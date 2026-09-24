@@ -9,13 +9,14 @@ import { fileURLToPath } from "node:url";
 const isDirectRun = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 import { agentLoop } from "./agent.js";
 import { log, logAction } from "./logger.js";
-import { getMyPositions, closePosition, getActiveBin } from "./tools/dlmm.js";
+import { getMyPositions, getActiveBin } from "./tools/dlmm.js";
 import { getWalletBalances } from "./tools/wallet.js";
 import { getTopCandidates, getVolumeTrend } from "./tools/screening.js";
 import { config, reloadScreeningThresholds, computeDeployAmount } from "./config.js";
 import { evolveThresholds, getCampaignPerformance, getPerformanceSummary } from "./lessons.js";
 import { registerCronRestarter, executeTool } from "./tools/executor.js";
 import { startPolling, stopPolling, sendMessage, sendHTML, notifyOutOfRange, isEnabled as telegramEnabled, createLiveMessage } from "./telegram.js";
+import { parseTelegramCommand, telegramHelp } from "./telegram-commands.js";
 import { generateBriefing } from "./briefing.js";
 import { getLastBriefingDate, setLastBriefingDate, getTrackedPosition, setPositionInstruction, updatePnlAndCheckExits, queuePeakConfirmation, resolvePendingPeak, queueTrailingDropConfirmation, resolvePendingTrailingDrop } from "./state.js";
 import { getActiveStrategy } from "./strategy-library.js";
@@ -1008,13 +1009,27 @@ async function drainTelegramQueue() {
   }
 }
 
+async function runTelegramShortcut(action) {
+  busy = true;
+  try { await action(); }
+  catch (error) { await sendMessage(`Perintah gagal: ${error.message}`); }
+  finally {
+    busy = false;
+    drainTelegramQueue().catch(() => {});
+  }
+}
+
 async function telegramHandler(msg) {
   const text = msg?.text?.trim();
   if (!text) return;
-  const modeCommand = text.match(/^\/(live|dry_run|mode)(?:@[A-Za-z0-9_]+)?$/i);
-  if (modeCommand) {
-    const command = modeCommand[1].toLowerCase();
-    if (command === "mode") {
+  const command = parseTelegramCommand(text);
+  const shortcutText = command ? `/${command.name}${command.args ? ` ${command.args}` : ""}` : text;
+  if (command?.name === "help" && !command.args) {
+    await sendMessage(telegramHelp(process.env.DRY_RUN === "true" ? "DRY_RUN" : "LIVE"));
+    return;
+  }
+  if (["live", "dry_run", "mode"].includes(command?.name) && !command.args) {
+    if (command.name === "mode") {
       await sendMessage(`Mode: ${process.env.DRY_RUN === "true" ? "DRY_RUN" : "LIVE"}. /dry_run atau /live. Restart mengikuti .env.`);
       return;
     }
@@ -1028,7 +1043,7 @@ async function telegramHandler(msg) {
     }
     _modeChanging = true;
     try {
-      await sendMessage(await switchRuntimeMode(command === "live" ? "LIVE" : "DRY_RUN"));
+      await sendMessage(await switchRuntimeMode(command.name === "live" ? "LIVE" : "DRY_RUN"));
     } catch (error) {
       await sendMessage(`Mode tidak berubah: ${error.message}`);
     } finally {
@@ -1046,7 +1061,59 @@ async function telegramHandler(msg) {
     return;
   }
 
-  if (text === "/briefing") {
+  if (["status", "check"].includes(command?.name) && !command.args) {
+    await runTelegramShortcut(async () => {
+      const [wallet, snapshot] = await Promise.all([getWalletBalances(), getMyPositions({ force: true })]);
+      if (wallet?.error || snapshot?.error) throw new Error(wallet?.error || snapshot?.error);
+      const lines = snapshot.positions.map((p, i) => `${i + 1}. ${p.pair}: ${p.in_range ? "IN" : "OOR"}, fee ${p.unclaimed_fees_usd ?? "?"}${config.management.solMode ? " SOL" : " USD"}`);
+      await sendMessage(`☀️ Sunstrike · ${process.env.DRY_RUN === "true" ? "DRY_RUN" : "LIVE"}\n` +
+        `Saldo: ${wallet.sol} SOL ($${wallet.sol_usd ?? "?"})\n` +
+        `Posisi: ${snapshot.total_positions}/${config.risk.maxPositions}\n` +
+        `${lines.length ? lines.join("\n") : "Belum ada posisi terbuka."}\n` +
+        `Siklus berikut: manajemen ${formatCountdown(nextRunIn(timers.managementLastRun, config.schedule.managementIntervalMin))}, screening ${formatCountdown(nextRunIn(timers.screeningLastRun, config.schedule.screeningIntervalMin))}.`);
+    });
+    return;
+  }
+
+  if (["candidates", "refresh"].includes(command?.name) && !command.args) {
+    await runTelegramShortcut(async () => {
+      await sendMessage("🔎 Memperbarui kandidat LP (baca-saja)...");
+      const result = await getTopCandidates({ limit: 5 });
+      const lines = result.candidates.map((p, i) => `${i + 1}. ${p.name} | umur ${p.token_age_hours ?? "?"}j | Jupiter ${p.token_info?.organic_score ?? "?"} | vol $${p.volume_window ?? "?"} | fee/TVL ${p.fee_active_tvl_ratio ?? "?"}%`);
+      await sendMessage(`Kandidat: ${result.total_eligible} lolos dari ${result.total_screened} pool.\n` +
+        `${lines.length ? lines.join("\n") : "Tidak ada kandidat lolos saat ini."}\n` +
+        `Ini daftar baca-saja. Tidak ada deploy. Screening otomatis tetap sesuai jadwal.`);
+    });
+    return;
+  }
+
+  if (command?.name === "thresholds" && !command.args) {
+    const s = config.screening;
+    await sendMessage(`Ambang screening:\nUmur token ≥${s.minTokenAgeHours}j, tanpa batas maksimum; Jupiter Score ≥${s.minOrganic}\n` +
+      `Volume ≥$${s.minVolume}/${s.timeframe}; fee/active TVL ≥${s.minFeeActiveTvlRatio}%; holder ≥${s.minHolders}; fee token ≥${s.minTokenFeesSol} SOL.\n` +
+      `Posisi maksimal ${config.risk.maxPositions} × ${config.management.deployAmountSol} SOL. /evolve butuh 5 posisi tertutup.`);
+    return;
+  }
+
+  if (command?.name === "evolve" && !command.args) {
+    await runTelegramShortcut(async () => {
+      const perf = getPerformanceSummary();
+      if (!perf || perf.total_positions_closed < 5) {
+        await sendMessage(`/evolve belum dijalankan: perlu 5 posisi tertutup; saat ini ${perf?.total_positions_closed ?? 0}.`);
+        return;
+      }
+      const result = evolveThresholds(getCampaignPerformance(), config);
+      if (!result || Object.keys(result.changes).length === 0) {
+        await sendMessage("/evolve selesai: tidak ada perubahan ambang yang didukung data.");
+        return;
+      }
+      reloadScreeningThresholds();
+      await sendMessage(`/evolve selesai: ${Object.entries(result.changes).map(([key, value]) => `${key}=${value}`).join(", ")}. Batas keras pemilik tetap berlaku.`);
+    });
+    return;
+  }
+
+  if (command?.name === "briefing" && !command.args) {
     try {
       const briefing = await generateBriefing();
       await sendHTML(briefing);
@@ -1056,9 +1123,10 @@ async function telegramHandler(msg) {
     return;
   }
 
-  if (text === "/positions") {
+  if (command?.name === "positions" && !command.args) {
     try {
-      const { positions, total_positions } = await getMyPositions({ force: true });
+      const { positions, total_positions, error } = await getMyPositions({ force: true });
+      if (error) throw new Error(error);
       if (total_positions === 0) { await sendMessage("No open positions."); return; }
       const cur = config.management.solMode ? "◎" : "$";
       const lines = positions.map((p, i) => {
@@ -1072,37 +1140,46 @@ async function telegramHandler(msg) {
     return;
   }
 
-  const closeMatch = text.match(/^\/close\s+(\d+)$/i);
+  const closeMatch = shortcutText.match(/^\/close\s+(\d+)$/i);
   if (closeMatch) {
-    try {
+    await runTelegramShortcut(async () => {
       const idx = parseInt(closeMatch[1]) - 1;
-      const { positions } = await getMyPositions({ force: true });
+      const { positions, error } = await getMyPositions({ force: true });
+      if (error) throw new Error(error);
       if (idx < 0 || idx >= positions.length) { await sendMessage("Invalid number. Use /positions first."); return; }
       const pos = positions[idx];
       await sendMessage(`Closing ${pos.pair}...`);
-      const result = await closePosition({ position_address: pos.position });
-      if (result.success) {
+      const result = await executeTool("close_position", { position_address: pos.position, reason: "manual Telegram /close" });
+      if (result?.dry_run) {
+        await sendMessage(`🧪 DRY_RUN: ${pos.pair} tidak ditutup; tidak ada transaksi.`);
+      } else if (result?.success) {
         const closeTxs = result.close_txs?.length ? result.close_txs : result.txs;
         const claimNote = result.claim_txs?.length ? `\nClaim txs: ${result.claim_txs.join(", ")}` : "";
-        await sendMessage(`✅ Closed ${pos.pair}\nPnL: ${config.management.solMode ? "◎" : "$"}${result.pnl_usd ?? "?"} | close txs: ${closeTxs?.join(", ") || "n/a"}${claimNote}`);
+        await sendMessage(`✅ Closed ${pos.pair}\nPnL: ${config.management.solMode ? "◎" : "$"}${result.pnl_usd ?? "?"} | close txs: ${closeTxs?.join(", ") || "n/a"}${claimNote}${result.auto_swap_failed ? `\n⚠️ ${result.auto_swap_note}` : ""}`);
       } else {
-        await sendMessage(`❌ Close failed: ${JSON.stringify(result)}`);
+        await sendMessage(`❌ Close failed: ${result?.reason || result?.error || "unknown error"}`);
       }
-    } catch (e) { await sendMessage(`Error: ${e.message}`).catch(() => {}); }
+    });
     return;
   }
 
-  const setMatch = text.match(/^\/set\s+(\d+)\s+(.+)$/i);
+  const setMatch = shortcutText.match(/^\/set\s+(\d+)\s+(.+)$/i);
   if (setMatch) {
-    try {
+    await runTelegramShortcut(async () => {
       const idx = parseInt(setMatch[1]) - 1;
       const note = setMatch[2].trim();
-      const { positions } = await getMyPositions({ force: true });
+      const { positions, error } = await getMyPositions({ force: true });
+      if (error) throw new Error(error);
       if (idx < 0 || idx >= positions.length) { await sendMessage("Invalid number. Use /positions first."); return; }
       const pos = positions[idx];
       setPositionInstruction(pos.position, note);
       await sendMessage(`✅ Note set for ${pos.pair}:\n"${note}"`);
-    } catch (e) { await sendMessage(`Error: ${e.message}`).catch(() => {}); }
+    });
+    return;
+  }
+
+  if (command) {
+    await sendMessage(`Perintah /${command.name} tidak dikenal atau argumennya salah. Kirim /help untuk daftar dan contoh.`);
     return;
   }
 
