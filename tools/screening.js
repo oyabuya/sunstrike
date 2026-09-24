@@ -5,7 +5,7 @@ import { log, logAction } from "../logger.js";
 import { isBaseMintOnCooldown, isPoolOnCooldown } from "../pool-memory.js";
 import { scoreEvilPandaCandidate, getEvilPandaThresholds, activityWindowMultiplier } from "../evilpanda-policy.js";
 import { evaluateTokenRisk } from "../token-risk-policy.js";
-import { assessFreshActivity, assessTokenMaturity } from "../candidate-quality.js";
+import { assessEntryActivity, assessTokenMaturity } from "../candidate-quality.js";
 import { getTokenInfo } from "./token.js";
 import { Connection, PublicKey } from "@solana/web3.js";
 
@@ -363,12 +363,21 @@ export async function getTopCandidates({ limit = 10, cycleId = null } = {}) {
   let totalScreened = pools.length;
   if (s.timeframe === "5m") await hydrateActivityWindows(pools);
   const activityPools = s.timeframe === "5m" ? pools.filter((pool) => {
-    const activity = assessFreshActivity({
+    const sustainedTrial = process.env.DRY_RUN === "true";
+    const snapshots = {
       fiveMinutes: pool.activity_windows?.["5m"],
+      thirtyMinutes: pool.activity_windows?.["30m"],
       oneHour: pool.activity_windows?.["1h"],
       screening: s,
-    });
-    if (activity.pass) return true;
+    };
+    const activity = assessEntryActivity(snapshots);
+    if (activity.pass) {
+      if (sustainedTrial) {
+        pool.activity_metrics = activity.metrics;
+        pool.activity_cautions = activity.cautions;
+      }
+      return true;
+    }
     pushFilteredReason(filteredOut, pool, activity.reason);
     return false;
   }) : pools;
@@ -782,9 +791,11 @@ return true;
     .sort((a, b) => (b.candidate_score ?? 0) - (a.candidate_score ?? 0))
     .slice(0, limit);
 
-  logAction({ tool: "screening_funnel", args: { profile: screeningProfile, cycle_id: cycleId }, result: {
+  const activityPolicy = process.env.DRY_RUN === "true" ? "sustained_1h_trial" : "strict_5m_live";
+  logAction({ tool: "screening_funnel", args: { profile: screeningProfile, cycle_id: cycleId, activity_policy: activityPolicy }, result: {
     discovered: totalScreened,
-    eligible: eligible.map((p) => ({ pool_address: p.pool, score: p.candidate_score })),
+    eligible: eligible.map((p) => ({ pool_address: p.pool, name: p.name, base_mint: p.base?.mint,
+      score: p.candidate_score, activity_metrics: p.activity_metrics ?? null, activity_cautions: p.activity_cautions ?? [] })),
     rejected: filteredOut.map(({ name, pool, mint, reason }) => ({ name, pool, mint, reason })),
   }, success: true });
 
@@ -796,6 +807,7 @@ return true;
     filtered_examples: filteredOut.slice(0, 3),
     rejected: filteredOut,
     screening_profile: screeningProfile,
+    activity_policy: activityPolicy,
   };
 }
 
@@ -803,7 +815,7 @@ return true;
 // one page is not evidence that the pool lacks activity in that timeframe.
 // Fetch the exact pool before applying the existing fail-closed activity gate.
 export async function hydrateActivityWindows(pools, loadDetail = getPoolDetail) {
-  const missing = pools.flatMap((pool) => ["5m", "1h"]
+  const missing = pools.flatMap((pool) => ["5m", "30m", "1h"]
     .filter((timeframe) => !pool.activity_windows?.[timeframe])
     .map((timeframe) => ({ pool, timeframe })));
   for (let i = 0; i < missing.length; i += 5) {

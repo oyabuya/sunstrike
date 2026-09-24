@@ -40,8 +40,10 @@ export function formatEvilPandaDeployPlan(plan) {
 
 export function scoreEvilPandaCandidate(pool = {}) {
   let score = 0;
-  const fee = activityPerFiveMinutes(pool.fee_active_tvl_ratio, pool.discovery_timeframe);
-  const volume = activityPerFiveMinutes(pool.volume_window, pool.discovery_timeframe);
+  const activity = process.env.DRY_RUN === "true" ? pool.activity_windows?.["1h"] ?? pool : pool;
+  const timeframe = activity === pool ? pool.discovery_timeframe : "1h";
+  const fee = activityPerFiveMinutes(activity.fee_active_tvl_ratio, timeframe);
+  const volume = activityPerFiveMinutes(activity.volume_window, timeframe);
   const vol = Number(pool.volatility);
   const smartWallets = Number(pool.gmgn_smart_wallets);
   const top10 = pool.gmgn_top10 != null ? Number(pool.gmgn_top10) * 100 : null;
@@ -101,6 +103,7 @@ export function scoreEvilPandaCandidate(pool = {}) {
   if (pool.bundler_caution_flag) score -= 2;
   if (pool.st_caution_flag) score -= 4;
   if (pool.vol_trend_caution_flag) score -= 3;
+  if (pool.activity_cautions?.length) score -= Math.min(10, pool.activity_cautions.length * 3);
   if (pool.cto_flagged_okx || pool.cto_flagged_dexscreener) score -= 1;
   if (pool.is_rugpull === true) score -= 25;
   if (pool.is_wash === true) score -= 25;

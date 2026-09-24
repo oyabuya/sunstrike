@@ -30,7 +30,12 @@ Sunstrike runs continuous screening and management cycles, deploying capital int
 - **Claude Code integration** — run AI-powered screening and management directly from your terminal using Claude Code slash commands
 
 With the default 5m setting, screening samples Meteora Pool Discovery at 5m,
-30m, 1h, and 2h, then deduplicates pools and applies the same risk gates.
+30m, 1h, and 2h, then deduplicates pools and applies the token risk gates.
+In `DRY_RUN`, an activity-policy trial requires the 1h window to average at least
+$500 volume and 0.02% fee/active-TVL per 5m. The 30m trend and latest 5m data
+produce cautions for scoring and Luna, not additional activity vetoes. Missing
+1h volume, fee, or pool identity still blocks. Live mode retains the existing
+5m and 1h entry activity checks until the trial has been evaluated.
 The API rejects 15m for discovery; the candidate records which supported window
 supplied its activity metrics. Final Jupiter audit and deploy preflight still apply.
 Every candidate is also checked against the Solana RPC for an existing account
@@ -154,7 +159,7 @@ For a low-cost model trial, set `managementModel`, `screeningModel`, and `genera
 
 Optional Jev market advice: set `JEV_SHADOW_ENABLED=true` in `.env` while `DRY_RUN=true`. Every 15 minutes Sunstrike samples trending Meteora pools from 5m and 1h windows, even when positions fill the deploy limit, and asks `typesafe/jev-1.13` to score up to five distinct pools. This wider scout is advisory only. During an eligible screening cycle, Jev also scores up to five hard-filtered candidates. Luna receives bounded Jev fee, momentum, and holder-risk scores only for matching eligible pool addresses; it must check the raw metrics and cannot bypass deploy gates. Scores, confidence, served model, API cost, and cycle ID are recorded in `logs/actions-*.jsonl`. Provider failures leave Luna's normal screening path intact. Jev scores are not probabilities of profit and need comparison with later net LP outcomes before any live use.
 
-To review a screening cycle, filter `logs/actions-*.jsonl` by `args.cycle_id` (`screen-<timestamp>`). `screening_funnel` records local filter rejections; `screening_candidates` records the full local rejection list and final shortlist with comparable 5m metrics; `jev_shadow` records scored pools or an error; `screening_decision` records Jev scores, Luna's report, and actual `deploy_position` attempts. `no_deploy_selected` means Luna made no deploy call, while `deploy_tool_failed` means an attempted call did not succeed. Pools excluded by the upstream discovery API are only counted in discovery totals, so their individual rejection reasons are unavailable. These logs show decisions, not realized LP returns.
+To review a screening cycle, filter `logs/actions-*.jsonl` by `args.cycle_id` (`screen-<timestamp>`). `screening_funnel` records local filter rejections and the active policy; `screening_candidates` records the full local rejection list and final shortlist with normalized 1h activity, 30m/5m readings, and cautions; `jev_shadow` records scored pools or an error; `screening_decision` records Jev scores, Luna's report, and actual `deploy_position` attempts. `no_deploy_selected` means Luna made no deploy call, while `deploy_tool_failed` means an attempted call did not succeed. Pools excluded by the upstream discovery API are only counted in discovery totals, so their individual rejection reasons are unavailable. These logs show decisions, not realized LP returns.
 
 When both position slots are occupied in `DRY_RUN`, screening still records the preliminary funnel under the same cycle ID. It logs `position_limit_observation` and makes no Jev/Luna call or deploy attempt. Live mode keeps the position-limit skip.
 

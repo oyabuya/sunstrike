@@ -15,9 +15,12 @@ export function buildJevShadowRequest(candidates) {
     pool_address: pool.pool,
     discovery_timeframe: pool.discovery_timeframe ?? null,
     fee_active_tvl_ratio: finite(pool.fee_active_tvl_ratio),
-    fee_active_tvl_ratio_5m_avg: activityPerFiveMinutes(pool.fee_active_tvl_ratio, pool.discovery_timeframe),
+    fee_active_tvl_ratio_5m_avg: pool.activity_metrics?.fee_tvl_1h_per_5m_pct ?? activityPerFiveMinutes(pool.fee_active_tvl_ratio, pool.discovery_timeframe),
     volume_window_usd: finite(pool.volume_window),
-    volume_5m_avg_usd: activityPerFiveMinutes(pool.volume_window, pool.discovery_timeframe),
+    volume_5m_avg_usd: pool.activity_metrics?.volume_1h_per_5m_usd ?? activityPerFiveMinutes(pool.volume_window, pool.discovery_timeframe),
+    volume_30m_per_5m_usd: pool.activity_metrics?.volume_30m_per_5m_usd ?? null,
+    fee_active_tvl_ratio_30m_per_5m: pool.activity_metrics?.fee_tvl_30m_per_5m_pct ?? null,
+    activity_cautions: pool.activity_cautions ?? [],
     active_tvl_usd: finite(pool.active_tvl),
     volatility: finite(pool.volatility),
     organic_score: finite(pool.organic_score),
@@ -39,7 +42,7 @@ export function buildJevShadowRequest(candidates) {
   for (const p of pools) {
     questions[`${p.id}_fees`] = {
       type: "score",
-      instructions: `For ${p.id}, how strong is observed fee activity relative to active TVL? Compare the 5m average across windows, and treat longer-window averages as uncertain about current activity. Use only supplied metrics; missing data is uncertain.`,
+      instructions: `For ${p.id}, how strong is sustained fee activity relative to active TVL? Use the 1h average as the baseline, inspect the 30m trend and latest 5m cautions. Use only supplied metrics; missing data is uncertain.`,
       criteria: [
         "Weak or unavailable fee evidence relative to active TVL",
         "Some fee activity, but the evidence is mixed or incomplete",

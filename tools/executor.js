@@ -23,7 +23,7 @@ import { getTokenInfo, getTokenHolders, getTokenNarrative } from "./token.js";
 import { getTrendingTokens, getDexScreenerPairs, getRugCheckReport } from "./dexscreener-rugcheck.js";
 import { config, reloadScreeningThresholds } from "../config.js";
 import { evaluateTokenRisk } from "../token-risk-policy.js";
-import { assessFreshActivity, assessTokenMaturity } from "../candidate-quality.js";
+import { assessEntryActivity, assessTokenMaturity } from "../candidate-quality.js";
 import { checkPortfolioRisk, validateNewPosition } from "../portfolio-risk.js";
 import fs from "fs";
 import path from "path";
@@ -516,20 +516,33 @@ async function runSafetyChecks(name, args) {
       }
 
       let poolData = null;
+      let fiveMinutePool = null;
+      let thirtyMinutePool = null;
       let oneHourPool = null;
       try {
-        [poolData, oneHourPool] = await Promise.all([
+        const [five, thirty, one] = await Promise.allSettled([
           getPoolDetail({ pool_address: args.pool_address, timeframe: "5m" }),
+          getPoolDetail({ pool_address: args.pool_address, timeframe: "30m" }),
           getPoolDetail({ pool_address: args.pool_address, timeframe: "1h" }),
         ]);
+        const sustainedTrial = process.env.DRY_RUN === "true";
+        if (one.status !== "fulfilled" || (!sustainedTrial && five.status !== "fulfilled")) {
+          return { pass: false, reason: "Deploy blocked: required fresh pool metadata could not be verified." };
+        }
+        fiveMinutePool = five.status === "fulfilled" ? five.value : null;
+        thirtyMinutePool = thirty.status === "fulfilled" ? thirty.value : null;
+        oneHourPool = one.value;
+        poolData = sustainedTrial ? oneHourPool : fiveMinutePool;
       } catch (error) {
         return { pass: false, reason: `Deploy blocked: current pool metadata could not be verified (${error.message}).` };
       }
       if (poolData?.pool !== args.pool_address || oneHourPool?.pool !== args.pool_address) {
         return { pass: false, reason: "Deploy blocked: fresh activity belongs to a different pool." };
       }
-      const activity = assessFreshActivity({ fiveMinutes: poolData, oneHour: oneHourPool, screening: config.screening });
+      const snapshots = { fiveMinutes: fiveMinutePool, thirtyMinutes: thirtyMinutePool, oneHour: oneHourPool, screening: config.screening };
+      const activity = assessEntryActivity(snapshots);
       if (!activity.pass) return { pass: false, reason: `Deploy blocked: ${activity.reason}.` };
+      if (activity.cautions.length) log("executor", `Pool ${args.pool_address.slice(0, 8)} activity caution: ${activity.cautions.join("; ")}`);
       if ((!poolData?.quote?.mint || !poolData?.base?.mint)) {
         return { pass: false, reason: "Deploy blocked: current pool and token mints could not be verified." };
       }

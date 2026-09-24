@@ -590,6 +590,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
     logAction({ tool: "screening_candidates", args: { cycle_id: shadowCycleId }, result: {
       discovery: topCandidates.discovery,
       profile: candidateSource,
+      activity_policy: topCandidates.activity_policy,
       rejected: [...(topCandidates.rejected || earlyFilteredExamples), ...filteredOut],
       shortlisted: passing.map(({ pool, ti }) => ({
         pool_address: pool.pool,
@@ -597,8 +598,10 @@ export async function runScreeningCycle({ silent = false } = {}) {
         base_mint: pool.base?.mint ?? null,
         screening_score: pool.candidate_score ?? null,
         timeframe: pool.discovery_timeframe ?? null,
-        fee_tvl_5m_pct: activityPerFiveMinutes(pool.fee_active_tvl_ratio, pool.discovery_timeframe),
-        volume_5m_usd: activityPerFiveMinutes(pool.volume_window, pool.discovery_timeframe),
+        fee_tvl_5m_pct: pool.activity_metrics?.fee_tvl_1h_per_5m_pct ?? activityPerFiveMinutes(pool.fee_active_tvl_ratio, pool.discovery_timeframe),
+        volume_5m_usd: pool.activity_metrics?.volume_1h_per_5m_usd ?? activityPerFiveMinutes(pool.volume_window, pool.discovery_timeframe),
+        activity_metrics: pool.activity_metrics ?? null,
+        activity_cautions: pool.activity_cautions ?? [],
         active_tvl_usd: pool.active_tvl ?? null,
         organic_score: ti?.organic_score ?? pool.organic_score ?? null,
         token_age_hours: pool.token_age_hours ?? null,
@@ -654,8 +657,8 @@ export async function runScreeningCycle({ silent = false } = {}) {
       const deployPlan = computeEvilPandaDeployPlan({ volatility: pool.volatility, binStep: pool.bin_step });
       const candidateScore = pool.candidate_score ?? 0;
       const jev = jevByAddress.get(pool.pool);
-      const feeRate5m = activityPerFiveMinutes(pool.fee_active_tvl_ratio, pool.discovery_timeframe);
-      const volumeRate5m = activityPerFiveMinutes(pool.volume_window, pool.discovery_timeframe);
+      const feeRate5m = pool.activity_metrics?.fee_tvl_1h_per_5m_pct ?? activityPerFiveMinutes(pool.fee_active_tvl_ratio, pool.discovery_timeframe);
+      const volumeRate5m = pool.activity_metrics?.volume_1h_per_5m_usd ?? activityPerFiveMinutes(pool.volume_window, pool.discovery_timeframe);
       const netScenario = estimateNetFeeScenario({ pool, amountSol: deployAmount, solPrice: currentBalance.sol_price });
 
       // OKX signals
@@ -694,7 +697,9 @@ export async function runScreeningCycle({ silent = false } = {}) {
         `  screening_score: ${candidateScore}`,
         jev ? `  jev_advisory_untrusted: fees=${jev.fees.score.toFixed(2)}/2 (${jev.fees.confidence.toFixed(2)} confidence), momentum=${jev.momentum.score.toFixed(2)}/2 (${jev.momentum.confidence.toFixed(2)} confidence), holder_risk=${jev.holder_risk.score.toFixed(2)}/2 (${jev.holder_risk.confidence.toFixed(2)} confidence; higher holder_risk means more concern` : null,
         `  metrics: timeframe=${pool.discovery_timeframe || config.screening.timeframe}, bin_step=${pool.bin_step}, fee_pct=${pool.fee_pct}%, fee_tvl=${pool.fee_active_tvl_ratio}, vol=$${pool.volume_window}, tvl=$${pool.active_tvl}, volatility=${pool.volatility}, mcap=$${pool.mcap}, organic=${pool.organic_score}${pool.token_age_hours != null ? `, age=${pool.token_age_hours}h` : ""}`,
-        feeRate5m != null && volumeRate5m != null ? `  comparable_activity_5m: fee_tvl=${feeRate5m.toFixed(4)}%, vol=$${volumeRate5m.toFixed(0)} (window average; check fresh trend)` : null,
+        feeRate5m != null && volumeRate5m != null ? `  sustained_activity_1h_per_5m: fee_tvl=${feeRate5m.toFixed(4)}%, vol=$${volumeRate5m.toFixed(0)}` : null,
+        pool.activity_metrics ? `  recent_activity: 30m_per_5m fee_tvl=${pool.activity_metrics.fee_tvl_30m_per_5m_pct?.toFixed(4) ?? "?"}%, vol=$${pool.activity_metrics.volume_30m_per_5m_usd?.toFixed(0) ?? "?"}; latest_5m fee_tvl=${pool.activity_metrics.fee_tvl_5m_pct ?? "?"}%, vol=$${pool.activity_metrics.volume_5m_usd ?? "?"}` : null,
+        pool.activity_cautions?.length ? `  activity_cautions: ${pool.activity_cautions.join("; ")}` : null,
         netScenario ? `  net_scenario_untrusted: 4h fees ~$${netScenario.estimated_fees_4h_usd}, costs ~$${netScenario.estimated_costs_usd}, net before inventory ~$${netScenario.net_before_inventory_usd}, after 5% adverse move ~$${netScenario.net_after_5pct_adverse_move_usd} (uncalibrated; assumes steady fees and half proportional fee capture)` : null,
         `  audit: top10=${top10Pct}%, bots=${botPct}%, fees=${feesSol}SOL${launchpad ? `, launchpad=${launchpad}` : ""}`,
         okxParts ? `  okx: ${okxParts}` : okxUnavailable ? `  okx: unavailable` : null,
@@ -726,7 +731,7 @@ ${candidateBlocks.join("\n\n")}
 STEPS:
 1. Pick the best candidate based on estimated net fee opportunity, current volume trend, risk evidence, then narrative and smart wallets as supporting signals. The net scenario is an uncalibrated ranking aid, not a profit forecast; inventory losses may exceed it.
    - Jev advisory scores are model opinions from supplied metrics. Check them against the raw data; they cannot override risk gates or authorize a deploy.
-   - Compare comparable_activity_5m across windows; it is a window average, so confirm current momentum with the 1h volume trend. Do not rank by raw totals across different windows.
+   - Rank by sustained_activity_1h_per_5m, then inspect the 30m direction and latest 5m cautions. Do not rank by raw totals across different windows.
    - Prefer pools with vol_trend=up or flat over vol_trend=down.
    - A pool with vol_trend=down and trend_pct < -50% is a red flag (momentum over).
 2. Call deploy_position with the exact recommended_deploy values from the chosen pool:
@@ -806,8 +811,10 @@ IMPORTANT:
           base_mint: pool.base?.mint,
           score: pool.candidate_score,
           timeframe: pool.discovery_timeframe,
-          fee_tvl_5m_pct: activityPerFiveMinutes(pool.fee_active_tvl_ratio, pool.discovery_timeframe),
-          volume_5m_usd: activityPerFiveMinutes(pool.volume_window, pool.discovery_timeframe),
+          fee_tvl_5m_pct: pool.activity_metrics?.fee_tvl_1h_per_5m_pct ?? activityPerFiveMinutes(pool.fee_active_tvl_ratio, pool.discovery_timeframe),
+          volume_5m_usd: pool.activity_metrics?.volume_1h_per_5m_usd ?? activityPerFiveMinutes(pool.volume_window, pool.discovery_timeframe),
+          activity_metrics: pool.activity_metrics ?? null,
+          activity_cautions: pool.activity_cautions ?? [],
           net_scenario: estimateNetFeeScenario({ pool, amountSol: deployAmount, solPrice: currentBalance.sol_price }),
         })),
         scored_addresses: shadowScores?.map((score) => score.pool_address) ?? [],
@@ -1122,8 +1129,8 @@ async function telegramHandler(msg) {
     await runTelegramShortcut(async () => {
       await sendMessage("🔎 Memperbarui kandidat LP (baca-saja)...");
       const result = await getTopCandidates({ limit: 50 });
-      const lines = result.candidates.slice(0, 5).map((p, i) => `${i + 1}. ${p.name} (${p.pool?.slice(0, 8)}…) | umur ${p.token_age_hours ?? "?"}j | Jupiter ${p.token_info?.organic_score ?? "?"} | vol $${p.volume_window ?? "?"} | fee/TVL ${p.fee_active_tvl_ratio ?? "?"}%`);
-      await sendMessage(`Kandidat: ${result.total_eligible} lolos dari ${result.total_screened} pool unik yang ditemukan setelah filter API. Scan 5m/30m/1h/2h, maksimum 50 pool unik; angka ${result.total_screened} bukan batas scan.\n` +
+      const lines = result.candidates.slice(0, 5).map((p, i) => `${i + 1}. ${p.name} (${p.pool?.slice(0, 8)}…) | umur ${p.token_age_hours ?? "?"}j | Jupiter ${p.token_info?.organic_score ?? "?"} | vol 1j $${p.activity_windows?.["1h"]?.volume_window ?? p.volume_window ?? "?"} | fee/TVL 1j ${p.activity_windows?.["1h"]?.fee_active_tvl_ratio ?? p.fee_active_tvl_ratio ?? "?"}%${p.activity_cautions?.length ? ` | ⚠ ${p.activity_cautions.join("; ")}` : ""}`);
+      await sendMessage(`Kandidat: ${result.total_eligible} lolos dari ${result.total_screened} pool unik yang ditemukan setelah filter API. ${result.activity_policy === "sustained_1h_trial" ? "Uji DRY_RUN: 1j wajib; 30m/5m sinyal kehati-hatian." : "LIVE: gate aktivitas 5m tetap wajib."} Scan 5m/30m/1h/2h, maksimum 50 pool unik; angka ${result.total_screened} bukan batas scan.\n` +
         `${lines.length ? lines.join("\n") : "Tidak ada kandidat lolos saat ini."}${result.total_eligible > 5 ? `\n${result.total_eligible - 5} kandidat lain tercatat di action log.` : ""}\n` +
         `Ini daftar baca-saja. Tidak ada deploy.`);
       const rejected = result.rejected || [];
