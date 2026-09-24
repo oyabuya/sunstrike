@@ -2,7 +2,7 @@
 
 ## Keputusan pemilik terbaru — 24 September 2026
 
-- Audit RugCheck berikutnya: adapter tool laporan membedakan skor mentah dari `score_normalised`, memverifikasi mint respons, dan mempertahankan `unknown` untuk authority/holder/locker yang tidak dilaporkan. Skor atau daftar locker tidak dijadikan alasan auto-close atau hard gate; belum ada integrasi Bubblemaps. Uji parser dan suite penuh diperlukan sebelum deploy DRY_RUN.
+- Audit RugCheck berikutnya: adapter tool laporan membedakan skor mentah dari `score_normalised`, memverifikasi mint respons, dan mempertahankan `unknown` untuk authority/holder/locker yang tidak dilaporkan. Skor atau daftar locker tidak dijadikan alasan auto-close atau hard gate; belum ada integrasi Bubblemaps. Commit `3e2be90` di-push dan dideploy ke VPS; 20 suite tes lulus, hanya `sunstrike.service` direstart, service active dan tetap `DRY_RUN=true`.
 - Kebijakan risiko baru menggantikan catatan historis $20 di bawah: modal perencanaan $100 dapat hilang seluruhnya; tidak ada breaker rugi total atau jeda otomatis setelah dua posisi rugi. Maksimum dua posisi, entry tepat 0,2 SOL per posisi, dengan batas eksposur USD dan reserve cair tetap berlaku.
 - Preferensi entry terbaru: umur token minimum 12 jam, tanpa batas maksimum; Jupiter Organic Score minimum 80 yang dibaca ulang saat preflight. Data hilang berarti skip.
 - Hold posisi yang masih dalam range dan menghasilkan fee meski nilai awal 0,2 SOL turun ke 0,1 SOL. Tidak ada take profit atau stop loss persentase otomatis. Tutup segera saat OOR atas atau audit token terbaru menunjukkan risiko rug tegas, termasuk ketika masih dalam range.
