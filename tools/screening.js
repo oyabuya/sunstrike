@@ -361,6 +361,7 @@ export async function getTopCandidates({ limit = 10 } = {}) {
   const { pools } = discovery;
   const filteredOut = [];
   let totalScreened = pools.length;
+  if (s.timeframe === "5m") await hydrateActivityWindows(pools);
   const activityPools = s.timeframe === "5m" ? pools.filter((pool) => {
     const activity = assessFreshActivity({
       fiveMinutes: pool.activity_windows?.["5m"],
@@ -784,7 +785,7 @@ return true;
   logAction({ tool: "screening_funnel", args: { profile: screeningProfile }, result: {
     discovered: totalScreened,
     eligible: eligible.map((p) => ({ pool_address: p.pool, score: p.candidate_score })),
-    rejected: filteredOut.map(({ name, reason }) => ({ name, reason })),
+    rejected: filteredOut.map(({ name, pool, mint, reason }) => ({ name, pool, mint, reason })),
   }, success: true });
 
   return {
@@ -795,6 +796,27 @@ return true;
     filtered_examples: filteredOut.slice(0, 3),
     screening_profile: screeningProfile,
   };
+}
+
+// Discovery pages are independently ranked per timeframe. A missing entry in
+// one page is not evidence that the pool lacks activity in that timeframe.
+// Fetch the exact pool before applying the existing fail-closed activity gate.
+export async function hydrateActivityWindows(pools, loadDetail = getPoolDetail) {
+  const missing = pools.flatMap((pool) => ["5m", "1h"]
+    .filter((timeframe) => !pool.activity_windows?.[timeframe])
+    .map((timeframe) => ({ pool, timeframe })));
+  for (let i = 0; i < missing.length; i += 5) {
+    await Promise.all(missing.slice(i, i + 5).map(async ({ pool, timeframe }) => {
+      try {
+        const detail = await loadDetail({ pool_address: pool.pool, timeframe });
+        if (detail.pool !== pool.pool || detail.base?.mint !== pool.base?.mint) return;
+        pool.activity_windows ??= {};
+        pool.activity_windows[timeframe] = detail;
+      } catch (error) {
+        log("screening", `${timeframe} detail unavailable for ${pool.pool}: ${error.message}`);
+      }
+    }));
+  }
 }
 
 /**
@@ -898,6 +920,8 @@ function pushFilteredReason(list, pool, reason) {
   if (!list || !pool) return;
   list.push({
     name: pool.name || `${pool.base?.symbol || "?"}-${pool.quote?.symbol || "?"}`,
+    pool: pool.pool,
+    mint: pool.base?.mint,
     reason,
   });
 }
