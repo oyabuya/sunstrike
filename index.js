@@ -85,7 +85,7 @@ const _peakConfirmTimers = new Map();
 const _trailingDropConfirmTimers = new Map();
 const _oorUpAttemptAt = new Map(); // positionAddress → last above-range close attempt
 const _openTokenStatusCache = new Map(); // mint → { at, status }
-const _emergencyShadowByPosition = new Map(); // position → { firstSeenAt, logged }
+const _emergencyShadowByPosition = new Map(); // position → { firstSeenAt, logged, notified, lastNotifyAttemptAt }
 const _belowRangeCheckCache = new Map(); // positionAddress → { at, assessment }
 let _lastRiskReadFailureAt = 0;
 const TRAILING_PEAK_CONFIRM_DELAY_MS = 15_000;
@@ -928,8 +928,8 @@ Summarize the current portfolio health, total fees earned, and performance of al
         const shadow = assessEmergencyPriceDrawdown({ position: p, tracked: getTrackedPosition(p.position),
           firstSeenAt: shadowPrior?.firstSeenAt ?? null });
         if (shadow.firstSeenAt != null) {
-          _emergencyShadowByPosition.set(p.position, { firstSeenAt: shadow.firstSeenAt,
-            logged: shadowPrior?.logged ?? false });
+          const shadowState = { firstSeenAt: shadow.firstSeenAt, logged: shadowPrior?.logged ?? false,
+            notified: shadowPrior?.notified ?? false, lastNotifyAttemptAt: shadowPrior?.lastNotifyAttemptAt ?? 0 };
           if (shadow.confirmed && !shadowPrior?.logged) {
             logAction({ tool: "emergency_exit_shadow", args: { position: p.position, pool: p.pool }, result: {
               price_drawdown_from_entry_pct: Math.round(shadow.drawdownPct * 100) / 100,
@@ -937,8 +937,18 @@ Summarize the current portfolio health, total fees earned, and performance of al
               organic_below_entry_floor: tokenStatus.organic_below_entry_floor ?? null,
               would_close: true, executed: false,
             }, success: true });
-            _emergencyShadowByPosition.get(p.position).logged = true;
+            shadowState.logged = true;
           }
+          if (shadow.confirmed && telegramEnabled() && !shadowState.notified &&
+              Date.now() - shadowState.lastNotifyAttemptAt >= 5 * 60_000) {
+            shadowState.lastNotifyAttemptAt = Date.now();
+            const sent = await sendMessage(`⚠️ PERINGATAN LP ${p.position}\nHarga turun ${shadow.drawdownPct.toFixed(1)}% dari entry selama ≥5 menit. Jupiter Score: ${tokenStatus.jupiter_organic_score ?? "tidak tersedia"}.\nPosisi TIDAK ditutup otomatis. Periksa /positions sebelum mengambil keputusan.`);
+            shadowState.notified = sent?.ok === true;
+            logAction({ tool: "emergency_exit_notification", args: { position: p.position }, result: {
+              delivered: shadowState.notified, price_drawdown_from_entry_pct: Math.round(shadow.drawdownPct * 100) / 100,
+            }, success: shadowState.notified });
+          }
+          _emergencyShadowByPosition.set(p.position, shadowState);
         } else _emergencyShadowByPosition.delete(p.position);
         let closeReason = null;
         if (tokenStatus.status === "critical") closeReason = `critical token risk: ${tokenStatus.reason}`;
