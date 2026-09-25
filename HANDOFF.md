@@ -1,5 +1,12 @@
 # Sunstrike — handoff
 
+## Status final persiapan LIVE — 25 September 2026, 18:56 WIB
+
+- Patch `eb32ef7` sudah di-push ke `origin/main` dan di-fast-forward ke VPS. Hanya `sunstrike.service` direstart; service active. 25 file suite lokal lulus, 13 tes terarah VPS lulus. Luna effort max menulis patch, Astra menyelesaikan review/verifikasi setelah Luna terkena usage limit.
+- `scripts/live-readiness.js` pada 11:56:13 UTC: `ready_for_entry=true`, blocker kosong, 0,776869 SOL cair, equity $94,26, nol posisi. Kekurangan saldo dan posisi COLLECT pada audit 14:00 WIB sudah tidak berlaku; perubahan wallet tersebut tidak dilakukan oleh sesi ini dan belum direkonsiliasi sebagai PnL.
+- `.env` tetap DRY_RUN; tidak ada transaksi atau aktivasi LIVE dalam sesi ini. Pemilik dapat memakai `/live` Telegram; handler mengecek konfigurasi dan snapshot ulang. Setiap entry tetap melewati preflight kandidat, maksimum dua posisi ×0,2 SOL, Spot single-side. Restart tetap mengikuti `.env`.
+- Detail strategi, patch, sumber primer dan risiko sisa ada di `reports/LIVE_READINESS_2026-09-25.md`. Tidak ada bukti profit konsisten atau uji transaksi nyata dari verifikasi ini. Swap gagal memberi alert, tetapi retry tahan restart dan rekonsiliasi deposit parsial belum diimplementasikan.
+
 ## Audit persiapan LIVE — 25 September 2026, 14:00 WIB
 
 - Pemilik meminta audit final dan implementasi oleh Luna effort max; Astra mengaudit dan meninjau patch Luna. Rincian: `reports/LIVE_READINESS_2026-09-25.md`.

@@ -2,6 +2,14 @@
 
 ## Keputusan operasional
 
+**Status terbaru 18:56 WIB:** patch `eb32ef7` telah di-push/deploy, service
+active setelah restart Sunstrike saja. Readiness 11:56:13 UTC lolos tanpa
+blocker: 0,776869 SOL, nol LP, equity $94,26. Mode tetap DRY_RUN. Pemilik
+dapat mengaktifkan `/live` dengan pemeriksaan ulang; tidak ada transaksi
+dilakukan dalam audit. Perubahan wallet sejak snapshot awal bukan hasil
+eksekusi sesi ini dan belum direkonsiliasi sebagai laba/rugi.
+Validasi: 25 file suite lokal serta 13 tes terarah VPS lulus.
+
 Snapshot VPS 07:00 UTC / 14:00 WIB: konfigurasi LIVE lolos, service aktif dalam
 DRY_RUN. Saldo cair 0,535582 SOL ($62,15), satu posisi COLLECT/SOL OOR bernilai
 $23,2451 + fee $0,0043; equity $85,3994. Ledger mengizinkan snapshot, tetapi
