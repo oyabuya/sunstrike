@@ -4,7 +4,7 @@
 
 - Tiga siklus VPS 15:33, 15:48, dan 16:03 UTC memilih 20 USDC tetapi preflight membalas `approved position size is 20 USDC`; tidak ada transaksi. Konfigurasi runtime tetap `deployAmountSol=0.2`, `maxPositions=2`, `strategy=spot`. Cabang ukuran lama juga menolak field `amount_sol` bila hadir pada permintaan USDC walaupun `amount_y=20` valid; argumen mentah model tidak direkam untuk ketiga blokir, jadi penyebab field ini disimpulkan dari cabang kode, bukan dibuktikan langsung oleh log.
 - Patch menerima `amount_y` tepat 20 USDC meski alias SOL lama ikut terkirim, lalu membuang alias sebelum eksekusi. Permintaan tanpa `amount_y` atau di atas 20 tetap diblokir. Pesan blokir kini menampilkan jumlah yang diterima. Prompt screening meminta Luna tidak mengirim `amount_sol` untuk USDC.
-- Verifikasi, commit, push, dan deploy dicatat sesudah selesai. Restart mengikuti `.env` DRY_RUN.
+- Patch `af03b8a` di-push dan dideploy; 27 suite lokal dan 4 tes deposit VPS lulus. Hanya `sunstrike.service` direstart, active, startup 16:16:30 UTC `DRY_RUN` sesuai `.env`. Belum ada kandidat/deploy nyata pascapatch; jalur transaksi on-chain belum terbukti oleh verifikasi ini.
 
 ## Insiden auto-close LP manual — 25 September 2026
 
