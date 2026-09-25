@@ -5,6 +5,12 @@ export const USDC_PER_POSITION = 20;
 // position-account rent without charging the unused bin-array rent buffer.
 export const USDC_POSITION_RENT_SOL = 0.02;
 
+export function isApprovedDepositRequest(args, deposit) {
+  const amountY = args?.amount_y ?? (deposit?.symbol === 'SOL' ? args?.amount_sol : null);
+  return Number.isFinite(amountY) && Number.isFinite(deposit?.amount) &&
+    Math.abs(amountY - deposit.amount) <= 0.000001;
+}
+
 export function chooseDeposit(balance, management = config.management, tokens = config.tokens, risk = config.risk) {
   const reserveSol = management.gasReserve + (management.binArrayRentBuffer ?? 0.15);
   const usdcReserveSol = management.gasReserve + USDC_POSITION_RENT_SOL;

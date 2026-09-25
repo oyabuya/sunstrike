@@ -1,5 +1,11 @@
 # Sunstrike — handoff
 
+## Penolakan deploy USDC pada screening — 25 September 2026
+
+- Tiga siklus VPS 15:33, 15:48, dan 16:03 UTC memilih 20 USDC tetapi preflight membalas `approved position size is 20 USDC`; tidak ada transaksi. Konfigurasi runtime tetap `deployAmountSol=0.2`, `maxPositions=2`, `strategy=spot`. Cabang ukuran lama juga menolak field `amount_sol` bila hadir pada permintaan USDC walaupun `amount_y=20` valid; argumen mentah model tidak direkam untuk ketiga blokir, jadi penyebab field ini disimpulkan dari cabang kode, bukan dibuktikan langsung oleh log.
+- Patch menerima `amount_y` tepat 20 USDC meski alias SOL lama ikut terkirim, lalu membuang alias sebelum eksekusi. Permintaan tanpa `amount_y` atau di atas 20 tetap diblokir. Pesan blokir kini menampilkan jumlah yang diterima. Prompt screening meminta Luna tidak mengirim `amount_sol` untuk USDC.
+- Verifikasi, commit, push, dan deploy dicatat sesudah selesai. Restart mengikuti `.env` DRY_RUN.
+
 ## Insiden auto-close LP manual — 25 September 2026
 
 - Empat `close_position` nyata pada 12:57, 13:08, 13:28, dan 14:10 UTC beralasan `price above LP range`. Keempat alamat posisi tidak ada di registry deploy Sunstrike; monitor 30 detik dan siklus manajemen sebelumnya membaca semua LP wallet lalu menerapkan auto-close OOR atas tanpa membedakan posisi manual.

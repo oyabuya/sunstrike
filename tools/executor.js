@@ -22,7 +22,7 @@ import { addSmartWallet, removeSmartWallet, listSmartWallets, checkSmartWalletsO
 import { getTokenInfo, getTokenHolders, getTokenNarrative } from "./token.js";
 import { getTrendingTokens, getDexScreenerPairs, getRugCheckReport } from "./dexscreener-rugcheck.js";
 import { APPROVED_POSITION_SIZE_SOL, config, reloadScreeningThresholds } from "../config.js";
-import { chooseDeposit, USDC_PER_POSITION } from "../deposit-policy.js";
+import { chooseDeposit, isApprovedDepositRequest, USDC_PER_POSITION } from "../deposit-policy.js";
 import { evaluateTokenRisk } from "../token-risk-policy.js";
 import { assessEntryActivity, assessTokenMaturity } from "../candidate-quality.js";
 import { checkPortfolioRisk, validateNewPosition } from "../portfolio-risk.js";
@@ -651,11 +651,14 @@ async function runSafetyChecks(name, args) {
       if (config.risk.maxPositions !== 2) {
         return { pass: false, reason: "Deploy blocked: the approved policy permits at most two open positions." };
       }
-      if (config.management.deployAmountSol !== APPROVED_POSITION_SIZE_SOL ||
-          Math.abs(amountY - deposit.amount) > 0.000001 ||
-          (deposit.symbol === 'USDC' && args.amount_sol != null)) {
-        return { pass: false, reason: `Deploy blocked: the approved position size is ${deposit.amount} ${deposit.symbol} (${USDC_PER_POSITION} USDC maximum per USDC LP).` };
+      if (config.management.deployAmountSol !== APPROVED_POSITION_SIZE_SOL) {
+        return { pass: false, reason: `Deploy blocked: configured SOL size is ${config.management.deployAmountSol}; approved baseline is ${APPROVED_POSITION_SIZE_SOL} SOL.` };
       }
+      if (!isApprovedDepositRequest(args, deposit)) {
+        return { pass: false, reason: `Deploy blocked: requested amount_y=${String(args.amount_y ?? 'missing')} ${deposit.symbol}; approved size is ${deposit.amount} ${deposit.symbol} (${USDC_PER_POSITION} USDC maximum per USDC LP).` };
+      }
+      // For USDC, amount_y is authoritative. Ignore the unused legacy SOL alias.
+      if (deposit.symbol === 'USDC') delete args.amount_sol;
       if ((args.strategy ?? config.strategy.strategy) !== "spot") {
         return { pass: false, reason: "Deploy blocked: the approved canary baseline requires the Spot strategy." };
       }

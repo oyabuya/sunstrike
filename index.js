@@ -746,6 +746,7 @@ STEPS:
 2. Call deploy_position with the exact recommended_deploy values from the chosen pool:
    - pool_address: <pool address with ${deposit.symbol} quote>
    - amount_y: ${deployAmount} ${deposit.symbol} ← REQUIRED, always pass this exact value
+   ${deposit.symbol === "USDC" ? "- omit amount_sol (legacy SOL-only field)" : "- amount_sol is optional; amount_y is authoritative"}
    - amount_x: 0
    - strategy: use the candidate's recommended_deploy.strategy exactly
    - bins_below: use the candidate's recommended_deploy.bins_below exactly

@@ -1,8 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chooseDeposit, USDC_PER_POSITION, USDC_POSITION_RENT_SOL } from '../deposit-policy.js';
+import { chooseDeposit, isApprovedDepositRequest, USDC_PER_POSITION, USDC_POSITION_RENT_SOL } from '../deposit-policy.js';
 import { config } from '../config.js';
 import { validateNewPosition } from '../portfolio-risk.js';
+
+test('USDC deploy accepts exact amount_y despite a redundant legacy SOL alias', () => {
+  const deposit = { symbol: 'USDC', amount: USDC_PER_POSITION };
+  assert.equal(isApprovedDepositRequest({ amount_y: 20, amount_sol: 0.2 }, deposit), true);
+  assert.equal(isApprovedDepositRequest({ amount_y: 20.01, amount_sol: 0.2 }, deposit), false);
+  assert.equal(isApprovedDepositRequest({ amount_sol: 20 }, deposit), false);
+  assert.equal(isApprovedDepositRequest({ amount_y: '20' }, deposit), false);
+  assert.equal(isApprovedDepositRequest({ amount_y: 0.2, amount_sol: 20 }, { symbol: 'SOL', amount: 0.2 }), true);
+});
 
 test('SOL has priority when both deposits can be funded', () => {
   const deposit = chooseDeposit({ sol: 0.8, sol_price: 120, usdc: 100 });
