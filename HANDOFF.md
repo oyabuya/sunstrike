@@ -1,5 +1,11 @@
 # Sunstrike — handoff
 
+## Status USDC fallback terverifikasi — 25 September 2026, 19:12 WIB
+
+- Commit implementasi `b7d69b2` dan koreksi reserve `c058084` sudah di-push/deploy ke VPS; hanya `sunstrike.service` direstart, active, masih DRY_RUN. Lokal 26 file suite lulus; VPS 14 tes implementasi dan 5 tes koreksi reserve lulus. Tidak ada transaksi LP dari sesi ini.
+- Snapshot 12:12:26 UTC: 0,233399 SOL, 40,37 USDC, satu LP GO/USDC in-range bernilai ~$19,79, equity ~$88,54. `live-readiness.js` memilih fallback 20 USDC dengan kebutuhan reserve 0,22 SOL; blocker kosong. Snapshot ini dapat berubah, dan entry tetap memerlukan preflight kandidat.
+- Discovery baca-saja 5m mengembalikan 1 pool quote USDC (GO-USDC) dari 3 hasil API, semua quote cocok; GO sudah punya posisi sehingga tidak berarti ada kandidat entry kedua sekarang. Mode LIVE belum diaktifkan dalam sesi ini. `get_top_candidates` multi-window tetap perlu menemukan pool lain yang lolos seluruh gate.
+
 ## Kebijakan pendanaan LP baru — 25 September 2026
 
 - Pemilik mengizinkan quote USDC sebagai fallback. Pilih Spot single-side 0,2 SOL bila saldo SOL cukup untuk posisi dan reserve; bila tidak, pilih Spot single-side tepat 20 USDC per posisi dengan SOL tersisa untuk biaya transaksi/rent. Dua LP USDC berarti deposit awal total 40 USDC. Maksimum dua posisi dan semua hard gate token/aktivitas tetap.
