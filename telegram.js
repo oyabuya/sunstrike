@@ -398,6 +398,17 @@ export async function notifyClose({ pair, pnlUsd, pnlPct }) {
   );
 }
 
+export async function notifyPostCloseSwapFailure({ baseMint, reason }) {
+  const escapeHtml = (value) => String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const safeReason = escapeHtml(String(reason || "unknown failure").replace(/\s+/g, " ").slice(0, 180));
+  await sendHTML(
+    `⚠️ <b>Konversi token ke SOL belum terkonfirmasi</b>\n` +
+    `Mint: <code>${escapeHtml(String(baseMint || "unknown"))}</code>\n` +
+    `Reason: ${safeReason}\n` +
+    `Periksa saldo dan status tx sebelum retry swap_token untuk menghindari swap ganda.`
+  );
+}
+
 export async function notifySwap({ inputSymbol, outputSymbol, amountIn, amountOut, tx }) {
   if (hasActiveLiveMessage()) return;
   await sendHTML(

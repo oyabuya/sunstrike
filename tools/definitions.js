@@ -126,7 +126,7 @@ Only call this if you need the current price to calculate a specific bin range (
       name: "deploy_position",
       description: `Open a new DLMM liquidity position. Executes a real on-chain transaction.
 Strategy and bin parameters are governed by the screener output's recommended_deploy plan — follow those exact values.
-Single-sided SOL deposit only (amount_y, amount_x=0) unless user specifies otherwise.`,
+Approved policy: Spot, single-sided 0.2 SOL deposit (amount_y=0.2, amount_x=0). Executor enforces this policy.`,
       parameters: {
         type: "object",
         properties: {
@@ -140,7 +140,7 @@ Single-sided SOL deposit only (amount_y, amount_x=0) unless user specifies other
           },
           amount_x: {
             type: "number",
-            description: "Amount of base token to deposit (if doing dual-sided)."
+            description: "Must be zero under the approved single-sided SOL policy."
           },
           amount_sol: {
             type: "number",
@@ -246,11 +246,11 @@ WARNING: This executes a real on-chain transaction.`,
       name: "close_position",
       description: `Remove all liquidity and close a position.
 This withdraws all tokens back to the wallet and closes the position account.
-Use when:
-- Position has been out of range for > 30 minutes
-- IL exceeds accumulated fees
-- Token shows danger signals (organic score drop, volume crash)
-- Rebalancing (close old + open new)
+Follow precomputed CLOSE actions or an explicit owner close instruction.
+Close immediately for confirmed critical token risk or price above the range.
+Below-range positions require four hours and current token, volume and fee evidence supporting exit.
+Hold in-range positions earning fees despite unrealized losses. Organic score decline alone is not a close trigger.
+After close, base tokens are swapped to SOL unless the owner explicitly requests holding them.
 
 WARNING: This executes a real on-chain transaction. Cannot be undone.`,
       parameters: {

@@ -77,6 +77,56 @@ async function getPool(poolAddress) {
 
 setInterval(() => poolCache.clear(), 5 * 60 * 1000).unref();
 
+const MAX_BIN_PER_ARRAY = 70;
+export const LIVE_DEPOSIT_SLIPPAGE_PERCENT = 10;
+
+export function inclusiveBinCount(minBinId, maxBinId) {
+  if (!Number.isInteger(minBinId) || !Number.isInteger(maxBinId) || maxBinId < minBinId) return null;
+  return maxBinId - minBinId + 1;
+}
+
+export async function checkBinArraysInitialized({ poolAddress, minBinId, maxBinId, connection = getConnection() }) {
+  const binCount = inclusiveBinCount(minBinId, maxBinId);
+  if (binCount == null) return { pass: false, error: "invalid bin range" };
+
+  try {
+    const DLMM_PROGRAM_ID = new PublicKey("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo");
+    const lbPairKey = new PublicKey(poolAddress);
+    const minArrayIdx = Math.floor(minBinId / MAX_BIN_PER_ARRAY);
+    const maxArrayIdx = Math.floor(maxBinId / MAX_BIN_PER_ARRAY);
+    const arrayIndexes = [];
+    const binArrayPdas = [];
+
+    for (let idx = minArrayIdx; idx <= maxArrayIdx; idx++) {
+      const idxBuf = new BN(idx).toTwos(64).toArrayLike(Buffer, "le", 8);
+      const [pda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("bin_array"), lbPairKey.toBuffer(), idxBuf],
+        DLMM_PROGRAM_ID,
+      );
+      arrayIndexes.push(idx);
+      binArrayPdas.push(pda);
+    }
+
+    const accounts = await connection.getMultipleAccountsInfo(binArrayPdas);
+    if (!Array.isArray(accounts) || accounts.length !== binArrayPdas.length) {
+      return { pass: false, error: "RPC returned an incomplete binArray account snapshot" };
+    }
+    const missingIndexes = accounts
+      .map((account, index) => account == null ? arrayIndexes[index] : null)
+      .filter((index) => index !== null);
+    return { pass: missingIndexes.length === 0, missingIndexes, checked: binArrayPdas.length };
+  } catch {
+    // The state is unknown, so live deployment must stop. Avoid logging RPC errors that may expose endpoint details.
+    return { pass: false, error: "on-chain binArray state could not be verified" };
+  }
+}
+
+export async function isPositionClosedOnChain(positionAddress, connection = getConnection()) {
+  const account = await connection.getAccountInfo(new PublicKey(normalizeMint(positionAddress)), "confirmed");
+  if (account === undefined) throw new Error("RPC returned no position account result");
+  return account === null;
+}
+
 // ─── Get Active Bin ────────────────────────────────────────────
 export async function getActiveBin({ pool_address }) {
   pool_address = normalizeMint(pool_address);
@@ -123,7 +173,7 @@ export async function deployPosition({
   }
 
   if (process.env.DRY_RUN === "true") {
-    const totalBins = activeBinsBelow + activeBinsAbove;
+    const totalBins = activeBinsBelow + activeBinsAbove + 1;
     return {
       dry_run: true,
       would_deploy: {
@@ -143,6 +193,9 @@ export async function deployPosition({
   const wallet = getWallet();
   const pool = await getPool(pool_address);
   const baseMint = pool.lbPair.tokenXMint.toString();
+  if (pool.lbPair.tokenYMint.toString() !== config.tokens.SOL) {
+    return { success: false, error: "Deploy blocked: on-chain quote token is not the approved SOL mint." };
+  }
   if (isBaseMintOnCooldown(baseMint)) {
     log("deploy", `Base mint ${baseMint.slice(0, 8)} is on cooldown — skipping deploy for pool ${pool_address.slice(0, 8)}`);
     return { success: false, error: "Token on cooldown — recently closed out-of-range too many times. Try a different token." };
@@ -197,7 +250,7 @@ export async function deployPosition({
     totalXLamports = new BN(Math.floor(finalAmountX * Math.pow(10, decimals)));
   }
 
-  const totalBins = activeBinsBelow + activeBinsAbove;
+  const totalBins = inclusiveBinCount(minBinId, maxBinId);
   const isWideRange = totalBins > 69;
   const newPosition = Keypair.generate();
 
@@ -209,45 +262,27 @@ export async function deployPosition({
   // ── BinArray existence check ─────────────────────────────────────
   // Meteora charges ~0.075 SOL non-refundable rent per binArray account that must be
   // created from scratch. Derive all required binArray PDAs for this position's range
-  // and verify they already exist on-chain. Block if any are missing.
+  // and verify they already exist on-chain. Block if any are missing or RPC state is unknown.
   if (process.env.DRY_RUN !== "true") {
-    try {
-      const DLMM_PROGRAM_ID = new PublicKey("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo");
-      const MAX_BIN_PER_ARRAY = 70;
-      const lbPairKey = new PublicKey(pool_address);
-
-      const minArrayIdx = Math.floor(minBinId / MAX_BIN_PER_ARRAY);
-      const maxArrayIdx = Math.floor(maxBinId / MAX_BIN_PER_ARRAY);
-
-      const binArrayPdas = [];
-      for (let idx = minArrayIdx; idx <= maxArrayIdx; idx++) {
-        // Use twos complement for negative indices (i64 little-endian)
-        const idxBuf = new BN(idx).toTwos(64).toArrayLike(Buffer, "le", 8);
-        const [pda] = PublicKey.findProgramAddressSync(
-          [Buffer.from("bin_array"), lbPairKey.toBuffer(), idxBuf],
-          DLMM_PROGRAM_ID
-        );
-        binArrayPdas.push(pda);
-      }
-
-      const accounts = await getConnection().getMultipleAccountsInfo(binArrayPdas);
-      const missingIdxs = accounts
-        .map((a, i) => (a === null ? minArrayIdx + i : null))
-        .filter((v) => v !== null);
-
-      if (missingIdxs.length > 0) {
-        const costSol = (missingIdxs.length * 0.075).toFixed(3);
-        log("deploy", `BinArray check: ${missingIdxs.length}/${binArrayPdas.length} binArray(s) not initialized (indices: ${missingIdxs.join(", ")})`);
+    const binArrayCheck = await checkBinArraysInitialized({
+      poolAddress: pool_address,
+      minBinId,
+      maxBinId,
+      connection: getConnection(),
+    });
+    if (!binArrayCheck.pass) {
+      if (binArrayCheck.missingIndexes?.length) {
+        const costSol = (binArrayCheck.missingIndexes.length * 0.075).toFixed(3);
+        log("deploy", `BinArray check: ${binArrayCheck.missingIndexes.length} required binArray(s) are missing`);
         return {
           success: false,
-          error: `Deploy blocked: ${missingIdxs.length} of ${binArrayPdas.length} required binArray account(s) are not yet initialized on-chain. Proceeding would charge ~${costSol} SOL in non-refundable rent. Choose a pool where other LPs have already initialized this price range.`,
+          error: `Deploy blocked: ${binArrayCheck.missingIndexes.length} required binArray account(s) are not initialized. Proceeding could charge ~${costSol} SOL in non-refundable rent. Choose a pool where the required arrays already exist.`,
         };
       }
-      log("deploy", `BinArray check: all ${binArrayPdas.length} required binArray(s) already exist ✓`);
-    } catch (binCheckErr) {
-      log("deploy", `BinArray check failed (non-blocking): ${binCheckErr.message}`);
-      // If the check itself errors (e.g. RPC issue), proceed — don't silently block deploys
+      log("deploy", "BinArray check failed: refusing deployment because on-chain account state is unknown");
+      return { success: false, error: "Deploy blocked: required binArray account state could not be verified." };
     }
+    log("deploy", `BinArray check: all ${binArrayCheck.checked} required binArray(s) already exist ✓`);
   }
 
   try {
@@ -282,7 +317,7 @@ export async function deployPosition({
         totalXAmount: totalXLamports,
         totalYAmount: totalYLamports,
         strategy: { minBinId, maxBinId, strategyType },
-        slippage: 10, // 10%
+        slippage: LIVE_DEPOSIT_SLIPPAGE_PERCENT,
       });
       const addTxArray = Array.isArray(addTxs) ? addTxs : [addTxs];
       for (let i = 0; i < addTxArray.length; i++) {
@@ -298,7 +333,7 @@ export async function deployPosition({
         totalXAmount: totalXLamports,
         totalYAmount: totalYLamports,
         strategy: { maxBinId, minBinId, strategyType },
-        slippage: 1000, // 10% in bps
+        slippage: LIVE_DEPOSIT_SLIPPAGE_PERCENT,
       });
       const txHash = await sendAndConfirmTransaction(getConnection(), tx, [wallet, newPosition]);
       txHashes.push(txHash);
@@ -858,20 +893,30 @@ export async function closePosition({ position_address, reason }) {
     }
 
     // ─── Step 2: Remove Liquidity & Close ──────────────────────
-    let hasLiquidity = false;
     let closeFromBinId = -887272;
     let closeToBinId = 887272;
+    let hasLiquidity;
     try {
       const positionDataForClose = await pool.getPosition(positionPubKey);
       const processed = positionDataForClose?.positionData;
-      if (processed) {
-        closeFromBinId = processed.lowerBinId ?? closeFromBinId;
-        closeToBinId = processed.upperBinId ?? closeToBinId;
-        const bins = Array.isArray(processed.positionBinData) ? processed.positionBinData : [];
-        hasLiquidity = bins.some((bin) => new BN(bin.positionLiquidity || "0").gt(new BN(0)));
+      if (!processed || !Array.isArray(processed.positionBinData)) {
+        throw new Error("position liquidity data is incomplete");
       }
+      if (processed.positionBinData.some((bin) => !bin || bin.positionLiquidity == null)) {
+        throw new Error("one or more bin liquidity values are missing");
+      }
+      closeFromBinId = processed.lowerBinId ?? closeFromBinId;
+      closeToBinId = processed.upperBinId ?? closeToBinId;
+      hasLiquidity = processed.positionBinData.some((bin) => new BN(bin.positionLiquidity || "0").gt(new BN(0)));
     } catch (e) {
-      log("close_warn", `Could not check liquidity state: ${e.message}`);
+      log("close_warn", "Could not verify position liquidity state; refusing to send a close transaction");
+      return {
+        success: false,
+        error: "Close blocked: position liquidity state could not be verified. No liquidity was removed.",
+        position: position_address,
+        pool: poolAddress,
+        claim_txs: claimTxHashes,
+      };
     }
 
     if (hasLiquidity) {
@@ -909,15 +954,13 @@ export async function closePosition({ position_address, reason }) {
     let closedConfirmed = false;
     for (let attempt = 0; attempt < 4; attempt++) {
       try {
-        const refreshed = await getMyPositions({ force: true, silent: true });
-        const stillOpen = refreshed?.positions?.some((p) => p.position === position_address);
-        if (!stillOpen) {
+        if (await isPositionClosedOnChain(position_address)) {
           closedConfirmed = true;
           break;
         }
-        log("close_warn", `Position ${position_address} still appears open after close txs (attempt ${attempt + 1}/4)`);
-      } catch (e) {
-        log("close_warn", `Close verification failed (attempt ${attempt + 1}/4): ${e.message}`);
+        log("close_warn", `Position account still exists after close txs (attempt ${attempt + 1}/4)`);
+      } catch {
+        log("close_warn", `On-chain close verification unavailable (attempt ${attempt + 1}/4)`);
       }
       if (attempt < 3) await new Promise((r) => setTimeout(r, 3000));
     }

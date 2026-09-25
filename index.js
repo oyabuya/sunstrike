@@ -482,8 +482,8 @@ export async function runScreeningCycle({ silent = false } = {}) {
     const binArrayBuffer = config.management.binArrayRentBuffer ?? 0.15;
     const minRequired = Math.max(config.management.minSolToOpen ?? 0, deployAmount + config.management.gasReserve + binArrayBuffer);
     if (deployAmount < 0.01) {
-      log("portfolio_risk", "Screening blocked: USD position budget cannot fund the 0.01 SOL minimum.");
-      screenReport = "Screening blocked: USD position budget cannot fund the 0.01 SOL minimum.";
+      screenReport = `Screening blocked: available SOL/USD budget cannot fund the fixed ${config.management.deployAmountSol} SOL position plus required reserves.`;
+      log("portfolio_risk", screenReport);
       _screeningBusy = false;
       return screenReport;
     }

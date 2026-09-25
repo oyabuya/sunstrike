@@ -1,5 +1,13 @@
 # Sunstrike — handoff
 
+## Audit persiapan LIVE — 25 September 2026, 14:00 WIB
+
+- Pemilik meminta audit final dan implementasi oleh Luna effort max; Astra mengaudit dan meninjau patch Luna. Rincian: `reports/LIVE_READINESS_2026-09-25.md`.
+- Snapshot VPS 07:00 UTC: konfigurasi LIVE PASS, 0,535582 SOL cair, satu COLLECT/SOL, equity $85,3994. Saldo kurang 0,014418 SOL dari gate 0,55 SOL; belum mengaktifkan LIVE. COLLECT OOR pada snapshot pertama, kembali in-range pada 07:03 UTC (aktif -431, batas -499/-430). Baca ulang sebelum keputusan apa pun.
+- Entry adalah Spot single-side SOL 0,2, tanpa swap awal 50:50. Bin atas awalnya tidak didanai token X; status dalam batas akun tidak menjamin likuiditas aktif. Rencana kandidat dapat menjangkau harga sekitar 76% di bawah entry pada volatilitas 2; bukan batas rugi. Double-side dan auto-close drawdown tidak disetujui/diaktifkan oleh audit ini.
+- Patch Luna ditinjau/diselesaikan Astra setelah Luna terkena usage limit: fail-closed binArray, jumlah bin inklusif, slippage SDK standar 10%, penguncian ukuran 0,2 SOL, verifikasi token Y SOL on-chain, close dikonfirmasi via akun on-chain, dan pelaporan swap/alert kegagalan yang jujur. Deskripsi tool exit lama dan log saldo juga diperbaiki. Antrean transaksi sudah ada dan dipertahankan.
+- Skrip baru `node scripts/live-readiness.js` membaca snapshot segar dan blocker tanpa transaksi/perubahan mode; snapshot ledger risiko diperbarui. Verifikasi lokal: 25 file suite lulus termasuk regresi baru; syntax/diff bersih. Deployment dan snapshot sesudah patch dicatat berikutnya. Tidak ada transaksi LIVE sebagai pengujian; partial deposit dan retry swap tahan restart masih risiko sisa.
+
 ## Status serah terima — 25 September 2026, 13:25 WIB
 
 - Lokal dan VPS pada `main` commit `4ca014a`; checkout VPS bersih, `sunstrike.service` active, `.env` `DRY_RUN=true`, `SUNSTRIKE_LIVE_ENABLED=true`, `JEV_SHADOW_ENABLED=true`. Flag LIVE mengizinkan permintaan `/live`, tetapi mode saat ini tetap DRY_RUN. Jangan anggap siap LIVE tanpa snapshot wallet/reserve/posisi segar.

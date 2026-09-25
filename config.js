@@ -7,6 +7,8 @@ import { fileURLToPath } from "url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const USER_CONFIG_PATH = path.join(__dirname, "user-config.json");
 
+export const APPROVED_POSITION_SIZE_SOL = 0.2;
+
 const u = fs.existsSync(USER_CONFIG_PATH)
   ? JSON.parse(fs.readFileSync(USER_CONFIG_PATH, "utf8"))
   : {};
@@ -182,6 +184,7 @@ export function assertLiveConfiguration() {
   if (!process.env.JUPITER_API_KEY) missing.push("JUPITER_API_KEY");
   if (!(process.env.OPENROUTER_API_KEY || process.env.LLM_API_KEY)) missing.push("OPENROUTER_API_KEY");
   if (config.risk.maxPositions !== 2) missing.push("maxPositions=2");
+  if (config.management.deployAmountSol !== APPROVED_POSITION_SIZE_SOL) missing.push(`deployAmountSol=${APPROVED_POSITION_SIZE_SOL}`);
   if (config.strategy.strategy !== "spot") missing.push("strategy=spot");
   if (config.management.autoCompoundEnabled !== false) missing.push("autoCompoundEnabled=false");
   if (config.screening.antiRugStrict !== true) missing.push("antiRugStrict=true");

@@ -21,7 +21,7 @@ import { blockDev, unblockDev, listBlockedDevs } from "../dev-blocklist.js";
 import { addSmartWallet, removeSmartWallet, listSmartWallets, checkSmartWalletsOnPool, autoDiscoverSmartWallets, getSmartWalletCandidatePools } from "../smart-wallets.js";
 import { getTokenInfo, getTokenHolders, getTokenNarrative } from "./token.js";
 import { getTrendingTokens, getDexScreenerPairs, getRugCheckReport } from "./dexscreener-rugcheck.js";
-import { config, reloadScreeningThresholds } from "../config.js";
+import { APPROVED_POSITION_SIZE_SOL, config, reloadScreeningThresholds } from "../config.js";
 import { evaluateTokenRisk } from "../token-risk-policy.js";
 import { assessEntryActivity, assessTokenMaturity } from "../candidate-quality.js";
 import { checkPortfolioRisk, validateNewPosition } from "../portfolio-risk.js";
@@ -33,7 +33,8 @@ import { execSync, spawn } from "child_process";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const USER_CONFIG_PATH = path.join(__dirname, "../user-config.json");
 import { log, logAction } from "../logger.js";
-import { notifyDeploy, notifyClose, notifySwap } from "../telegram.js";
+import { notifyDeploy, notifyClose, notifySwap, notifyPostCloseSwapFailure } from "../telegram.js";
+import { getPostCloseSwapCandidate, isConfirmedSwapResult } from "./post-close-swap.js";
 
 // Registered by index.js so update_config can restart cron jobs when intervals change
 let _cronRestarter = null;
@@ -260,7 +261,7 @@ outOfRangeWaitMinutes: ["management", "outOfRangeWaitMinutes"],
       takeProfitFeePct:     { min: 0.5, max: 999 },
       maxPositions:         { min: 1, max: 20 },
       maxDeployAmount:      { min: 0.01, max: 1000 },
-      deployAmountSol:      { min: 0.01, max: 100 },
+      deployAmountSol:      { min: APPROVED_POSITION_SIZE_SOL, max: APPROVED_POSITION_SIZE_SOL },
       gasReserve:           { min: 0.01, max: 2 },
       positionSizePct:      { min: 0.01, max: 1 },
       minFeeActiveTvlRatio: { min: 0.001, max: 50 },
@@ -425,10 +426,22 @@ async function executeToolNow(name, args) {
           try {
             const balances = await getWalletBalances({});
             if (balances?.error) throw new Error("wallet balance lookup failed; swap amount is unknown");
-            const token = balances.tokens?.find(t => t.mint === result.base_mint);
-            if (token && token.usd >= 0.10) {
-              log("executor", `Auto-swapping ${token.symbol || result.base_mint.slice(0, 8)} ($${token.usd.toFixed(2)}) back to SOL`);
-              const swapResult = await swapToken({ input_mint: result.base_mint, output_mint: "SOL", amount: token.balance });
+            const candidate = getPostCloseSwapCandidate(balances.tokens, result.base_mint);
+            if (candidate.status === "unknown") throw new Error(candidate.reason);
+            if (candidate.status === "dust") {
+              result.auto_swap_skipped = true;
+              result.auto_swap_note = `Base token balance is below the $0.10 swap threshold; no swap was sent.`;
+            } else if (candidate.status === "none") {
+              result.auto_swap_skipped = true;
+              result.auto_swap_note = "No positive base token balance was found after close; no swap was needed.";
+            } else {
+              const { token, amount } = candidate;
+              const usdLabel = Number.isFinite(token.usd) ? ` ($${token.usd.toFixed(2)})` : " (USD value unavailable)";
+              log("executor", `Auto-swapping ${token.symbol || result.base_mint.slice(0, 8)}${usdLabel} back to SOL`);
+              const swapResult = await swapToken({ input_mint: result.base_mint, output_mint: "SOL", amount });
+              if (!isConfirmedSwapResult(swapResult)) {
+                throw new Error(swapResult?.error || "swap returned without a confirmed transaction signature");
+              }
               // Tell the model the swap already happened so it doesn't call swap_token again
               result.auto_swapped = true;
               result.auto_swap_note = `Base token already auto-swapped back to SOL (${token.symbol || result.base_mint.slice(0, 8)} → SOL). Do NOT call swap_token again.`;
@@ -437,17 +450,23 @@ async function executeToolNow(name, args) {
           } catch (e) {
             log("executor_warn", `Auto-swap after close failed: ${e.message}`);
             result.auto_swap_failed = true;
-            result.auto_swap_note = `Auto-swap failed (${e.message}). Call swap_token manually to convert ${result.base_mint?.slice(0, 8)} back to SOL.`;
+            result.auto_swap_note = `Auto-swap unconfirmed (${e.message}). Check fresh wallet balances and any submitted transaction before retrying swap_token; do not blindly repeat a possibly submitted swap.`;
+            logAction({ tool: "post_close_swap", args: { position: args.position_address, mint: result.base_mint }, result: { confirmed: false, reason: e.message }, success: false });
+            notifyPostCloseSwapFailure({ baseMint: result.base_mint, reason: e.message }).catch(() => {});
           }
         }
       } else if (name === "claim_fees" && config.management.autoSwapAfterClaim && result.base_mint) {
         try {
           const balances = await getWalletBalances({});
           if (balances?.error) throw new Error("wallet balance lookup failed; swap amount is unknown");
-          const token = balances.tokens?.find(t => t.mint === result.base_mint);
-          if (token && token.usd >= 0.10) {
-            log("executor", `Auto-swapping claimed ${token.symbol || result.base_mint.slice(0, 8)} ($${token.usd.toFixed(2)}) back to SOL`);
-            await swapToken({ input_mint: result.base_mint, output_mint: "SOL", amount: token.balance });
+          const candidate = getPostCloseSwapCandidate(balances.tokens, result.base_mint);
+          if (candidate.status === "unknown") throw new Error(candidate.reason);
+          if (candidate.status === "ready") {
+            log("executor", `Auto-swapping claimed ${candidate.token.symbol || result.base_mint.slice(0, 8)} back to SOL`);
+            const swapResult = await swapToken({ input_mint: result.base_mint, output_mint: "SOL", amount: candidate.amount });
+            if (!isConfirmedSwapResult(swapResult)) {
+              throw new Error(swapResult?.error || "swap returned without a confirmed transaction signature");
+            }
           }
         } catch (e) {
           log("executor_warn", `Auto-swap after claim failed: ${e.message}`);
@@ -629,8 +648,9 @@ async function runSafetyChecks(name, args) {
       if (config.risk.maxPositions !== 2) {
         return { pass: false, reason: "Deploy blocked: the approved policy permits at most two open positions." };
       }
-      if (Math.abs(amountY - config.management.deployAmountSol) > 0.000001) {
-        return { pass: false, reason: `Deploy blocked: the approved position size is ${config.management.deployAmountSol} SOL.` };
+      if (config.management.deployAmountSol !== APPROVED_POSITION_SIZE_SOL ||
+          Math.abs(amountY - APPROVED_POSITION_SIZE_SOL) > 0.000001) {
+        return { pass: false, reason: `Deploy blocked: the approved position size is ${APPROVED_POSITION_SIZE_SOL} SOL.` };
       }
       if ((args.strategy ?? config.strategy.strategy) !== "spot") {
         return { pass: false, reason: "Deploy blocked: the approved canary baseline requires the Spot strategy." };

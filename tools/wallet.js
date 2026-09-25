@@ -125,6 +125,12 @@ export async function getWalletBalances() {
  */
 const SOL_MINT = "So11111111111111111111111111111111111111112";
 
+export function isJupiterUltraExecutionSuccess(result) {
+  return result?.status === "Success" &&
+    typeof result.signature === "string" &&
+    result.signature.trim().length > 0;
+}
+
 // Normalize any SOL-like address to the correct wrapped SOL mint
 export function normalizeMint(mint) {
   if (!mint) return mint;
@@ -220,8 +226,12 @@ export async function swapToken({
     }
 
     const result = await execRes.json();
-    if (result.status === "Failed") {
-      throw new Error(`Swap failed on-chain: code=${result.code}`);
+    if (!isJupiterUltraExecutionSuccess(result)) {
+      const detail = result?.status === "Failed" ? ` code=${result.code}` : "";
+      const signature = typeof result?.signature === "string" && result.signature
+        ? ` signature=${result.signature}`
+        : "";
+      throw new Error(`Swap was not confirmed successful (status=${result?.status || "missing status/signature"}).${detail}${signature}`);
     }
 
     log("swap", `SUCCESS tx: ${result.signature}`);
@@ -267,7 +277,10 @@ async function swapViaQuoteApi({ wallet, connection, input_mint, output_mint, am
   const tx = VersionedTransaction.deserialize(Buffer.from(swapTransaction, "base64"));
   tx.sign([wallet]);
   const txHash = await connection.sendRawTransaction(tx.serialize(), { skipPreflight: false });
-  await connection.confirmTransaction(txHash, "confirmed");
+  const confirmation = await connection.confirmTransaction(txHash, "confirmed");
+  if (confirmation?.value?.err) {
+    throw new Error(`Swap failed on-chain: ${JSON.stringify(confirmation.value.err)} (signature=${txHash})`);
+  }
 
   log("swap", `SUCCESS (fallback) tx: ${txHash}`);
   return { success: true, tx: txHash, input_mint, output_mint };
