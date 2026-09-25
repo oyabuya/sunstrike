@@ -35,6 +35,7 @@ import { recordJevShadow } from "./tools/jev-shadow.js";
 import { scanJevMarket } from "./tools/jev-market.js";
 import { checkPortfolioRisk } from "./portfolio-risk.js";
 import { evaluateTokenRisk } from "./token-risk-policy.js";
+import { isBotManagedPosition } from "./position-ownership.js";
 
 log("startup", "DLMM LP Agent starting...");
 log("startup", `Mode: ${process.env.DRY_RUN === "true" ? "DRY RUN" : "LIVE"}`);
@@ -273,6 +274,7 @@ export async function runManagementCycle({ silent = false } = {}) {
     // JS trailing TP check
     const exitMap = new Map();
     for (const p of positionData) {
+      if (!isBotManagedPosition(p, getTrackedPosition(p.position))) continue;
       if (!p.pnl_pct_suspicious && queuePeakConfirmation(p.position, p.pnl_pct)) {
         schedulePeakConfirmation(p.position);
       }
@@ -294,6 +296,10 @@ export async function runManagementCycle({ silent = false } = {}) {
     // action: CLOSE | CLAIM | STAY | INSTRUCTION (needs LLM)
     const actionMap = new Map();
     for (const p of positionData) {
+      if (!isBotManagedPosition(p, getTrackedPosition(p.position))) {
+        actionMap.set(p.position, { action: "STAY", manual: true });
+        continue;
+      }
       // Hard exit — highest priority
       if (exitMap.has(p.position)) {
         actionMap.set(p.position, { action: "CLOSE", rule: "exit", reason: exitMap.get(p.position) });
@@ -329,7 +335,7 @@ export async function runManagementCycle({ silent = false } = {}) {
       const inRange = p.in_range ? "🟢 IN" : `🔴 OOR ${p.minutes_out_of_range ?? 0}m`;
       const val = config.management.solMode ? `◎${p.total_value_usd ?? "?"}` : `$${p.total_value_usd ?? "?"}`;
       const unclaimed = config.management.solMode ? `◎${p.unclaimed_fees_usd ?? "?"}` : `$${p.unclaimed_fees_usd ?? "?"}`;
-      const statusLabel = act.action === "INSTRUCTION" ? "HOLD (instruction)" : act.action;
+      const statusLabel = act.manual ? "HOLD (manual LP)" : act.action === "INSTRUCTION" ? "HOLD (instruction)" : act.action;
       let line = `**${p.pair}** | Age: ${p.age_minutes ?? "?"}m | Val: ${val} | Unclaimed: ${unclaimed} | PnL: ${p.pnl_pct ?? "?"}% | Yield: ${p.fee_per_tvl_24h ?? "?"}% | ${inRange} | ${statusLabel}`;
       if (p.instruction) line += `\nNote: "${p.instruction}"`;
       if (act.action === "CLOSE" && act.rule === "exit") line += `\n⚡ Trailing TP: ${act.reason}`;
@@ -389,6 +395,7 @@ RULES:
 Execute the required actions. Do NOT re-evaluate CLOSE/CLAIM — rules already applied. Just execute.
 After executing, write a brief one-line result per position.
       `, config.llm.maxStepsManager, [], "MANAGER", config.llm.managementModel, config.llm.maxTokens, {
+        allowedManagementPositionAddresses: actionPositions.map((p) => p.position),
         onToolStart: async ({ name }) => { await liveMessage?.toolStart(name); },
         onToolFinish: async ({ name, result, success }) => { await liveMessage?.toolFinish(name, result, success); },
       });
@@ -872,7 +879,9 @@ export function startCronJobs() {
 HEALTH CHECK
 
 Summarize the current portfolio health, total fees earned, and performance of all open positions. Recommend any high-level adjustments if needed.
-      `, config.llm.maxStepsManager, [], "MANAGER", config.llm.managementModel);
+      `, config.llm.maxStepsManager, [], "MANAGER", config.llm.managementModel, null, {
+        allowedManagementPositionAddresses: [],
+      });
     } catch (error) {
       log("cron_error", `Health check failed: ${error.message}`);
     } finally {
@@ -914,6 +923,7 @@ Summarize the current portfolio health, total fees earned, and performance of al
       }
       if (!result?.positions?.length) return;
       for (const p of result.positions) {
+        if (!isBotManagedPosition(p, getTrackedPosition(p.position))) continue;
         let tokenStatus = { status: "unknown" };
         if (p.base_mint) {
           const cached = _openTokenStatusCache.get(p.base_mint);
