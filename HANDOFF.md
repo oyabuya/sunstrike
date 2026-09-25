@@ -1,5 +1,14 @@
 # Sunstrike — handoff
 
+## Status serah terima — 25 September 2026, 13:25 WIB
+
+- Lokal dan VPS pada `main` commit `4ca014a`; checkout VPS bersih, `sunstrike.service` active, `.env` `DRY_RUN=true`, `SUNSTRIKE_LIVE_ENABLED=true`, `JEV_SHADOW_ENABLED=true`. Flag LIVE mengizinkan permintaan `/live`, tetapi mode saat ini tetap DRY_RUN. Jangan anggap siap LIVE tanpa snapshot wallet/reserve/posisi segar.
+- Gate entry tetap umur token ≥12 jam dan Jupiter Organic Score ≥80 pada screening serta preflight. Uji aktivitas 1j hanya untuk DRY_RUN; LIVE masih memakai gate 5m lama. Jev shadow, Luna pemilih dry-run; tidak ada relaksasi hard risk gate.
+- Audit LP familiars: tiga posisi manual wallet operator di pool `ET9QEc18…`, PnL posisi Meteora gabungan −0,13155043 SOL; harga turun ~47% dalam 40 menit dan ~77% hingga penutupan akhir. Skor Jupiter terakhir sebelum entry yang tersimpan 87,66; skor tepat saat entry tidak diketahui. Klaim 245,7463 SOL oleh alamat developer adalah `CollectCoinCreatorFee` Pump AMM, bukan bukti jual token/penarikan likuiditas. Detail dan tx ada di `reports/FAMILIARS_LP_TRACE_2026-09-25.md`.
+- Mitigasi terpasang: posisi **yang dibuka Sunstrike** dipantau dari bin entry. Drawdown harga ≥20% terus-menerus selama ≥5 menit mencatat `emergency_exit_shadow` dan mengirim satu peringatan Telegram operator; kegagalan kirim dicoba ulang tiap ≥5 menit. Pesan menegaskan posisi **tidak** ditutup otomatis. Skor Jupiter <80 saja masuk log, belum memicu pesan/close. Posisi manual tanpa data entry bot tidak tercakup. Cooldown mint setelah exit belum diterapkan.
+- Verifikasi: 24 suite lokal lulus; 4 tes terkait lulus di VPS setelah deploy `4ca014a`. Telegram token dan chat operator terkonfigurasi, tetapi belum ada event `emergency_exit_shadow`/`emergency_exit_notification` sesudah deploy sehingga pengiriman saat trigger nyata belum teruji. Query indeks posisi Meteora terakhir mendapat HTTP error; jumlah posisi saat ini belum terverifikasi. Pada penyusunan handoff ini tidak ada transaksi atau restart layanan.
+- Langkah berikut: uji pengiriman alert end-to-end tanpa transaksi; kumpulkan beberapa contoh posisi untuk mengukur false positive dan hasil hipotetis exit; baru putuskan bersama pemilik apakah pemutus darurat harus auto-close meski in-range/OOR <4 jam dan berapa cooldown mint. Rekonsiliasi PnL bersih wallet serta atribusi penjual besar familiars masih terbuka.
+
 ## Pembaruan 25 September 2026
 
 - Usulan mitigasi pascaaudit familiars (belum menjadi kebijakan auto-close LIVE): shadow monitor posisi yang dibuka Sunstrike mencatat satu `emergency_exit_shadow` bila harga dari bin entry turun ≥20% secara terus-menerus selama ≥5 menit; event memuat skor Jupiter saat itu dan `executed=false`. Setelah konfirmasi, bot mengirim satu peringatan Telegram ke chat operator yang terkonfigurasi; kegagalan dikirim ulang paling cepat lima menit kemudian dan status pengiriman tercatat. Tidak ada perubahan close nyata. Uji cooldown mint sesudah exit darurat masih rencana. Pada replay candle 5m, dua penutupan berturut-turut ≥20% di bawah candle acuan 20:20 terjadi 24 Sep 20:30/20:35 UTC; ini sinyal retrospektif, bukan estimasi PnL exit. Jupiter <80 hanya sinyal tambahan karena data 75 baru tersimpan setelah crash. Jangan aktifkan auto-close atau ubah aturan hold/OOR empat jam sebelum kalibrasi dan keputusan pemilik.
@@ -24,7 +33,7 @@
 - Patch `b9b9a96` menambah gate aktivitas 5m+1h di screening dan preflight, skenario fee bersih sebagai ranking advisory, log funnel/keputusan, serta monitor token dan exit 30 detik. Semua 19 suite tes lulus; belum ada bukti peningkatan PnL nyata.
 - Commit di-push ke `origin/main` dan di-fast-forward ke VPS. `user-config.json` VPS diselaraskan: maksimum dua posisi, 0,2 SOL, umur minimum 12 jam, Jupiter Score minimum 80, tanpa umur maksimum atau trailing take profit. Hanya `sunstrike.service` direstart; service active, `DRY_RUN=true`. Sampel log awal menunjukkan screening berjalan; belum ada transaksi baru.
 
-Terakhir diperbarui: **2026-09-24 WIB**. Baca `AGENTS.md`, dokumen ini, `RESTART_AUDIT_2026-09-23.md`, dan `STRATEGY_REVIEW_2026-09-24.md` sebelum melanjutkan.
+Catatan historis di bawah ini terakhir diperbarui **2026-09-24 WIB**; status serah terima di bagian atas lebih baru. Baca `AGENTS.md`, dokumen ini, `RESTART_AUDIT_2026-09-23.md`, dan `STRATEGY_REVIEW_2026-09-24.md` sebelum melanjutkan.
 
 ## Keputusan terakhir pemilik
 
@@ -34,7 +43,7 @@ Terakhir diperbarui: **2026-09-24 WIB**. Baca `AGENTS.md`, dokumen ini, `RESTART
 - Histori April tetap utuh sebagai arsip. Rekonsiliasi April bukan syarat campaign wallet baru; statistik dan auto-learning posisi kini disaring per wallet.
 - Sasaran tetap PnL bersih setelah perubahan inventory, swap, gas, rent, dan biaya operasional. Strategi belum terbukti profit konsisten.
 
-## Status operasional terakhir yang diverifikasi
+## Status operasional historis — 23–24 September 2026
 
 - Lokal: `/home/oyabuya/Documents/GITHUB/sunstrike`, branch `main`, remote `origin` → `oyabuya/sunstrike`.
 - VPS: `ssh hetzner-prod`, checkout `/home/ubuntu/projects/sunstrike`. Commit terakhir yang terverifikasi pada sesi sebelumnya **`fbbb711`**. VPS tidak diperiksa atau diubah pada sesi ini.
@@ -111,7 +120,7 @@ Suite lokal mencakup startup gate, wallet/risk state, restart latch, pemisahan b
 
 Arsip April tetap berisi **871 action rows**, 29 deploy sukses, 29 close sukses, satu close gagal, satu claim sukses, dan 28 hasil PnL bersih tercatat **−$5,33**. Angka ini arsip pembanding; tidak mengunci campaign baru. Rekonsiliasi 104 signature opsional untuk audit sejarah dan tidak perlu selesai sebelum LP baru.
 
-## Pekerjaan berikutnya — prioritas
+## Pekerjaan historis — tinjau ulang sebelum dikerjakan
 
 1. Cocokkan alamat wallet yang diturunkan dari key `.env` dengan wallet yang berisi $100. Jangan kirim key ke chat; bila alamat berbeda, perbaiki `WALLET_PRIVATE_KEY` lokal agar menunjuk wallet funded.
 2. Setelah wallet yang benar terpilih dan memiliki equity/SOL operasional, jalankan `DRY_RUN=true node scripts/init-portfolio-risk.js`. Script hanya membaca wallet/LP dan menolak ledger bila equity tidak memadai atau ada LP terbuka.
