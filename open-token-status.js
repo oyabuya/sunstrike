@@ -20,6 +20,7 @@ export function classifyOpenTokenStatus({ mint, token, risk }) {
   if (token?.mint !== mint) return { status: "unknown", reason: "matching token audit unavailable" };
 
   const priceChange1h = metric(token.stats_1h?.price_change);
+  const organicScore = metric(token.organic_score);
   const netBuyers1h = metric(token.stats_1h?.net_buyers);
   const buyVolume1h = metric(token.stats_1h?.buy_vol);
   const sellVolume1h = metric(token.stats_1h?.sell_vol);
@@ -30,6 +31,8 @@ export function classifyOpenTokenStatus({ mint, token, risk }) {
     status: sellingPressure ? "selling_pressure" : "no_critical_flag_observed",
     reason: sellingPressure ? "1h price, net buyers and sell volume all deteriorated" : null,
     price_change_1h_pct: priceChange1h,
+    jupiter_organic_score: organicScore,
+    organic_below_entry_floor: organicScore != null ? organicScore < 80 : null,
     net_buyers_1h: netBuyers1h,
     risk_level: metric(token.risk_level ?? risk?.risk_level),
     wash_flag: risk?.is_wash ?? null,

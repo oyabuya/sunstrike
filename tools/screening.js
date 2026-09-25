@@ -795,7 +795,8 @@ return true;
   logAction({ tool: "screening_funnel", args: { profile: screeningProfile, cycle_id: cycleId, activity_policy: activityPolicy }, result: {
     discovered: totalScreened,
     eligible: eligible.map((p) => ({ pool_address: p.pool, name: p.name, base_mint: p.base?.mint,
-      score: p.candidate_score, activity_metrics: p.activity_metrics ?? null, activity_cautions: p.activity_cautions ?? [] })),
+      score: p.candidate_score, jupiter_organic_score: p.token_info?.organic_score ?? null,
+      activity_metrics: p.activity_metrics ?? null, activity_cautions: p.activity_cautions ?? [] })),
     rejected: filteredOut.map(({ name, pool, mint, reason }) => ({ name, pool, mint, reason })),
   }, success: true });
 

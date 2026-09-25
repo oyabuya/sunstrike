@@ -2,11 +2,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { classifyOpenTokenStatus, readOpenTokenStatus } from "../open-token-status.js";
 
-const token = { mint: "MINT", audit: { mint_disabled: true, freeze_disabled: true },
+const token = { mint: "MINT", organic_score: 75, audit: { mint_disabled: true, freeze_disabled: true },
   stats_1h: { price_change: "-20", net_buyers: -5, buy_vol: "100", sell_vol: "300" } };
 
 test("selling pressure alone does not claim a rug", () => {
-  assert.equal(classifyOpenTokenStatus({ mint: "MINT", token, risk: null }).status, "selling_pressure");
+  const status = classifyOpenTokenStatus({ mint: "MINT", token, risk: null });
+  assert.equal(status.status, "selling_pressure");
+  assert.equal(status.jupiter_organic_score, 75);
+  assert.equal(status.organic_below_entry_floor, true);
   assert.equal(classifyOpenTokenStatus({ mint: "MINT", token: { ...token, stats_1h: { price_change: "-20" } }, risk: null }).status, "no_critical_flag_observed");
 });
 
