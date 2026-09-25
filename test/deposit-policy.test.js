@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chooseDeposit, USDC_PER_POSITION } from '../deposit-policy.js';
+import { chooseDeposit, USDC_PER_POSITION, USDC_POSITION_RENT_SOL } from '../deposit-policy.js';
 import { config } from '../config.js';
 import { validateNewPosition } from '../portfolio-risk.js';
 
@@ -15,7 +15,7 @@ test('USDC fallback needs $20 and SOL transaction reserve', () => {
   const deposit = chooseDeposit({ sol: 0.4, sol_price: 120, usdc: 40 });
   assert.equal(deposit.mint, config.tokens.USDC);
   assert.equal(deposit.amount, USDC_PER_POSITION);
-  const reserve = config.management.gasReserve + config.management.binArrayRentBuffer;
+  const reserve = config.management.gasReserve + USDC_POSITION_RENT_SOL;
   assert.equal(deposit.requiredSol, reserve);
   assert.equal(chooseDeposit({ sol: reserve - 0.01, sol_price: 120, usdc: 40 }), null);
   assert.equal(chooseDeposit({ sol: 0.4, sol_price: 120, usdc: 19.99 }), null);
