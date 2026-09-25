@@ -4,7 +4,7 @@
 
 - Empat `close_position` nyata pada 12:57, 13:08, 13:28, dan 14:10 UTC beralasan `price above LP range`. Keempat alamat posisi tidak ada di registry deploy Sunstrike; monitor 30 detik dan siklus manajemen sebelumnya membaca semua LP wallet lalu menerapkan auto-close OOR atas tanpa membedakan posisi manual.
 - Patch membatasi auto-close, auto-claim, dan exit PnL ke posisi aktif yang tercatat sebagai deploy Sunstrike; siklus Luna juga mendapat daftar alamat yang boleh ditindak. LP manual tetap terlihat dalam laporan dan dapat ditutup lewat perintah `/close` eksplisit. Hard exit untuk LP yang dibuka bot tetap berlaku.
-- Verifikasi, commit, dan status deploy dicatat setelah selesai. Restart service mengikuti `.env` DRY_RUN; mode runtime LIVE yang mungkin diaktifkan lewat Telegram tidak bertahan setelah restart.
+- Commit `31cdc33` sudah di-push dan dideploy ke VPS; hanya `sunstrike.service` direstart, service active. 27 suite lokal lulus, 3 tes ownership di VPS lulus. Startup 14:18:25 UTC menunjukkan `DRY_RUN` sesuai `.env`; mode runtime LIVE yang mungkin diaktifkan lewat Telegram tidak bertahan setelah restart. Tidak ada transaksi saat patch/deploy; LP manual baru pascapatch belum diuji secara live.
 
 ## Status USDC fallback terverifikasi — 25 September 2026, 19:12 WIB
 
