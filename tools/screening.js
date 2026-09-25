@@ -178,8 +178,8 @@ export async function discoverPools({
   overrides = {},
 } = {}) {
   const s = { ...config.screening, ...overrides };
-  // SOL mint — used for post-filter (not API query — API may not support quote_token_mint parameter)
-  const SOL_MINT = config.tokens.SOL;
+  // Quote mint is checked after discovery because the API does not support a quote mint filter.
+  const allowedQuote = s.quoteMint || null;
 
   const filters = buildDiscoveryFilters(s).join("&&");
 
@@ -213,18 +213,19 @@ export async function discoverPools({
     return true;
   });
 
-  // SOL-quote filter — only keep pools where quote token is SOL (wallet holds SOL only)
+  // Only SOL and USDC quote pools may reach preflight.
   // Done as post-filter (not API query) because quote_token_mint is not a supported API param.
-  const beforeSolFilter = pools.length;
+  const beforeQuoteFilter = pools.length;
   pools = pools.filter((p) => {
-    if (p.quote?.mint && p.quote.mint !== SOL_MINT) {
-      log("screening", `SOL-filter: dropped ${p.name} — quote token is not SOL (${p.quote.mint?.slice(0,8)})`);
+    if (!p.quote?.mint || ![config.tokens.SOL, config.tokens.USDC].includes(p.quote.mint) ||
+        (allowedQuote && p.quote.mint !== allowedQuote)) {
+      log("screening", `Quote filter: dropped ${p.name} — quote mint ${p.quote?.mint?.slice(0, 8) || 'unknown'}`);
       return false;
     }
     return true;
   });
-  if (pools.length < beforeSolFilter)
-    log("screening", `SOL-filter removed ${beforeSolFilter - pools.length} non-SOL pool(s)`);
+  if (pools.length < beforeQuoteFilter)
+    log("screening", `Quote filter removed ${beforeQuoteFilter - pools.length} pool(s)`);
 
   // Wash-trading cache — skip mints already confirmed as wash-trading (OKX) within 6h
   const beforeWashCache = pools.length;
@@ -306,7 +307,7 @@ export async function discoverPools({
  * Returns eligible pools for the agent to evaluate and pick from.
  * Hard filters applied in code, agent decides which to deploy into.
  */
-export async function getTopCandidates({ limit = 10, cycleId = null } = {}) {
+export async function getTopCandidates({ limit = 10, cycleId = null, quote_mint = null } = {}) {
   const { config } = await import("../config.js");
   const s = config.screening;
   // Discovery supports 5m, 30m, 1h, 2h (but rejects 15m). Sample each
@@ -315,6 +316,7 @@ export async function getTopCandidates({ limit = 10, cycleId = null } = {}) {
   const results = await Promise.allSettled(timeframes.map((timeframe) =>
     discoverPools({ page_size: 50, overrides: {
       timeframe,
+      quoteMint: quote_mint,
       // Configured 5m floors should represent the same activity rate in every window.
       ...(s.timeframe === "5m" ? {
         minVolume: s.minVolume * activityWindowMultiplier(timeframe),

@@ -156,7 +156,7 @@ SMART WALLET REVERSE TRACKING (MANDATORY):
 POOL MEMORY: Past losses or problems → strong skip signal.
 
 DEPLOY RULES:
-- Use the cycle's exact 0.2 SOL amount. Never increase it or the two-position limit.
+- Use the cycle's selected quote and exact amount: 0.2 SOL when funded, otherwise 20 USDC with SOL transaction reserve. Never increase either amount or the two-position limit.
 - Use the exact recommended_deploy values attached to the chosen candidate.
 - Do not invent bins, do not change strategy, do not improvise a new range.
 - Prefer higher fee pools for meme coins — more fee per panic seller.

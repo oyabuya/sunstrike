@@ -113,13 +113,13 @@ export function assessEntryActivity(snapshots, dryRun = process.env.DRY_RUN === 
 // four hours of unchanged fees, half of the proportional fee share reaching
 // this position, 1% round-trip swap friction and 0.005 SOL network costs.
 // Inventory PnL is shown separately as a 5% adverse-price stress case.
-export function estimateNetFeeScenario({ pool, amountSol, solPrice }) {
-  const amountUsd = amountSol * solPrice;
+export function estimateNetFeeScenario({ pool, amountSol, amountUsd: explicitAmountUsd, solPrice }) {
+  const amountUsd = explicitAmountUsd ?? amountSol * solPrice;
   const activity = process.env.DRY_RUN === "true" ? pool?.activity_windows?.["1h"] ?? pool : pool;
   const activeTvl = Number(activity?.active_tvl);
   const feeRate5m = activityPerFiveMinutes(activity?.fee_active_tvl_ratio, activity === pool ? pool?.discovery_timeframe : "1h");
-  if (![amountSol, solPrice, activeTvl, feeRate5m].every(Number.isFinite) ||
-      amountSol <= 0 || solPrice <= 0 || activeTvl <= 0 || feeRate5m <= 0) return null;
+  if (![amountUsd, solPrice, activeTvl, feeRate5m].every(Number.isFinite) ||
+      amountUsd <= 0 || solPrice <= 0 || activeTvl <= 0 || feeRate5m <= 0) return null;
   const poolFees5mUsd = activeTvl * feeRate5m / 100;
   const feeShare = amountUsd / (activeTvl + amountUsd);
   const estimatedFees4hUsd = poolFees5mUsd * 48 * feeShare * 0.5;

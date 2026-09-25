@@ -10,7 +10,7 @@ Baseline kerja per sesi. Gaya: pendek, tegas, no basa-basi.
 - Baca `HANDOFF.md` untuk keadaan terakhir, keputusan pemilik, dan pekerjaan berikutnya. Perbarui bila status material berubah.
 
 ## Batas restart saat ini
-- Modal perencanaan $100 dapat hilang seluruhnya. Maksimum dua posisi terbuka, masing-masing 0,2 SOL; tidak ada batas rugi portofolio $20 atau jeda otomatis setelah dua rugi. Entry tetap bergantung pada preflight dan saldo/reserve.
+- Modal perencanaan $100 dapat hilang seluruhnya. Maksimum dua posisi terbuka: prioritas 0,2 SOL per posisi bila SOL cukup, atau 20 USDC per posisi (maksimum 40 USDC untuk dua LP) bila SOL tidak cukup tetapi reserve SOL tersedia. Tidak ada batas rugi portofolio $20 atau jeda otomatis setelah dua rugi. Entry tetap bergantung pada preflight dan saldo/reserve.
 - Hold selama posisi dalam range dan fee masih berjalan meski rugi belum terealisasi. Tutup segera bila audit terbaru memberi sinyal rug tegas atau harga OOR atas. OOR bawah ditinjau setelah empat jam dengan bukti volume, fee, dan status token.
 - Entry memerlukan token berumur minimal 12 jam dan Jupiter Organic Score minimal 80; tidak ada batas umur maksimum.
 - VPS `ssh hetzner-prod`; tempat Sunstrike `/home/ubuntu/projects/sunstrike`. Jangan menghapus atau mengaktifkan ulang layanan lain.

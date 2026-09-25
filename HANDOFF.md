@@ -1,5 +1,12 @@
 # Sunstrike — handoff
 
+## Kebijakan pendanaan LP baru — 25 September 2026
+
+- Pemilik mengizinkan quote USDC sebagai fallback. Pilih Spot single-side 0,2 SOL bila saldo SOL cukup untuk posisi dan reserve; bila tidak, pilih Spot single-side tepat 20 USDC per posisi dengan SOL tersisa untuk biaya transaksi/rent. Dua LP USDC berarti deposit awal total 40 USDC. Maksimum dua posisi dan semua hard gate token/aktivitas tetap.
+- Screening membatasi shortlist ke quote terpilih; preflight membaca ulang saldo/quote dan menolak ukuran/quote salah. SDK memverifikasi token Y SOL atau USDC dan decimals on-chain. Ledger USD tetap membatasi eksposur dan reserve. USDC pada token X belum didukung; pool harus menempatkan USDC sebagai quote/token Y.
+- Mode LIVE dan readiness kini menerima fallback USDC dengan reserve SOL. Posisi USDC ditrack dengan jumlah/mint quote, sementara `amount_sol` nol agar pencatatan PnL tidak mencampur unit. Tidak ada swap SOL→USDC otomatis untuk entry.
+- Verifikasi, commit, push, deployment dan snapshot VPS sesudah perubahan dicatat pada update berikutnya. Saat penulisan ini belum ada transaksi LP dari patch ini.
+
 ## Status final persiapan LIVE — 25 September 2026, 18:56 WIB
 
 - Patch `eb32ef7` sudah di-push ke `origin/main` dan di-fast-forward ke VPS. Hanya `sunstrike.service` direstart; service active. 25 file suite lokal lulus, 13 tes terarah VPS lulus. Luna effort max menulis patch, Astra menyelesaikan review/verifikasi setelah Luna terkena usage limit.

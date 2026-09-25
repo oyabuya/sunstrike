@@ -59,6 +59,10 @@ Use this instead of discover_pools for screening cycles.`,
           limit: {
             type: "number",
             description: "Number of top candidates to return. Default 3."
+          },
+          quote_mint: {
+            type: "string",
+            description: "Selected SOL or USDC quote mint for this scan."
           }
         }
       }
@@ -126,7 +130,7 @@ Only call this if you need the current price to calculate a specific bin range (
       name: "deploy_position",
       description: `Open a new DLMM liquidity position. Executes a real on-chain transaction.
 Strategy and bin parameters are governed by the screener output's recommended_deploy plan — follow those exact values.
-Approved policy: Spot, single-sided 0.2 SOL deposit (amount_y=0.2, amount_x=0). Executor enforces this policy.`,
+Approved policy: Spot, single-sided quote deposit (amount_x=0): 0.2 SOL when funded, otherwise 20 USDC with SOL transaction reserve. Executor enforces asset and size.`,
       parameters: {
         type: "object",
         properties: {
@@ -136,15 +140,15 @@ Approved policy: Spot, single-sided 0.2 SOL deposit (amount_y=0.2, amount_x=0). 
           },
           amount_y: {
             type: "number",
-            description: "Amount of quote token (usually SOL) to deposit."
+            description: "Exact quote deposit: 0.2 SOL or 20 USDC according to current wallet policy."
           },
           amount_x: {
             type: "number",
-            description: "Must be zero under the approved single-sided SOL policy."
+            description: "Must be zero under the approved single-sided quote policy."
           },
           amount_sol: {
             type: "number",
-            description: "Alias for amount_y. For backward compatibility."
+            description: "Legacy alias for amount_y on SOL-quoted pools only. For USDC use amount_y."
           },
           strategy: {
             type: "string",

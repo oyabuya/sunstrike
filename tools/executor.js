@@ -22,6 +22,7 @@ import { addSmartWallet, removeSmartWallet, listSmartWallets, checkSmartWalletsO
 import { getTokenInfo, getTokenHolders, getTokenNarrative } from "./token.js";
 import { getTrendingTokens, getDexScreenerPairs, getRugCheckReport } from "./dexscreener-rugcheck.js";
 import { APPROVED_POSITION_SIZE_SOL, config, reloadScreeningThresholds } from "../config.js";
+import { chooseDeposit, USDC_PER_POSITION } from "../deposit-policy.js";
 import { evaluateTokenRisk } from "../token-risk-policy.js";
 import { assessEntryActivity, assessTokenMaturity } from "../candidate-quality.js";
 import { checkPortfolioRisk, validateNewPosition } from "../portfolio-risk.js";
@@ -398,7 +399,7 @@ async function executeToolNow(name, args) {
       if (name === "swap_token" && result.tx) {
         notifySwap({ inputSymbol: args.input_mint?.slice(0, 8), outputSymbol: args.output_mint === "So11111111111111111111111111111111111111112" || args.output_mint === "SOL" ? "SOL" : args.output_mint?.slice(0, 8), amountIn: result.amount_in, amountOut: result.amount_out, tx: result.tx }).catch(() => {});
       } else if (name === "deploy_position") {
-        notifyDeploy({ pair: result.pool_name || args.pool_name || args.pool_address?.slice(0, 8), amountSol: args.amount_y ?? args.amount_sol ?? 0, position: result.position, tx: result.txs?.[0] ?? result.tx, priceRange: result.price_range, binStep: result.bin_step, baseFee: result.base_fee }).catch(() => {});
+        notifyDeploy({ pair: result.pool_name || args.pool_name || args.pool_address?.slice(0, 8), amountSol: args.amount_y ?? args.amount_sol ?? 0, amountSymbol: result.quote_mint === config.tokens.USDC ? 'USDC' : 'SOL', position: result.position, tx: result.txs?.[0] ?? result.tx, priceRange: result.price_range, binStep: result.bin_step, baseFee: result.base_fee }).catch(() => {});
         const adaptiveInterval = computeAdaptiveManagementInterval(result?.volatility ?? args?.volatility);
         if (adaptiveInterval != null && adaptiveInterval !== config.schedule.managementIntervalMin) {
           toolMap.update_config({
@@ -569,8 +570,10 @@ async function runSafetyChecks(name, args) {
       if (args.base_mint && args.base_mint !== poolMint) {
         return { pass: false, reason: "Deploy blocked: supplied base mint does not match the pool's current base mint." };
       }
-      if (poolData.quote.mint !== config.tokens.SOL) {
-        return { pass: false, reason: "Deploy blocked: only SOL-quoted pools are supported by the approved risk policy." };
+      const deposit = chooseDeposit(balance);
+      if (!deposit) return { pass: false, reason: "Deploy blocked: need 0.2 SOL or 20 USDC plus SOL transaction reserve." };
+      if (poolData.quote.mint !== deposit.mint) {
+        return { pass: false, reason: `Deploy blocked: current wallet policy selects ${deposit.symbol}; pool quote must match.` };
       }
       if (positions.positions.some((p) => p.base_mint === poolMint)) {
         return { pass: false, reason: "Already holding this pool's base token in another position." };
@@ -637,11 +640,11 @@ async function runSafetyChecks(name, args) {
       }
 
       // Check amount limits
-      const amountY = args.amount_y ?? args.amount_sol ?? 0;
-      if (amountY <= 0) {
+      const amountY = args.amount_y ?? (deposit.symbol === 'SOL' ? args.amount_sol : null);
+      if (!Number.isFinite(amountY) || amountY <= 0) {
         return {
           pass: false,
-          reason: `Must provide a positive SOL amount (amount_y).`,
+          reason: `Must provide a positive ${deposit.symbol} amount (amount_y).`,
         };
       }
 
@@ -649,26 +652,27 @@ async function runSafetyChecks(name, args) {
         return { pass: false, reason: "Deploy blocked: the approved policy permits at most two open positions." };
       }
       if (config.management.deployAmountSol !== APPROVED_POSITION_SIZE_SOL ||
-          Math.abs(amountY - APPROVED_POSITION_SIZE_SOL) > 0.000001) {
-        return { pass: false, reason: `Deploy blocked: the approved position size is ${APPROVED_POSITION_SIZE_SOL} SOL.` };
+          Math.abs(amountY - deposit.amount) > 0.000001 ||
+          (deposit.symbol === 'USDC' && args.amount_sol != null)) {
+        return { pass: false, reason: `Deploy blocked: the approved position size is ${deposit.amount} ${deposit.symbol} (${USDC_PER_POSITION} USDC maximum per USDC LP).` };
       }
       if ((args.strategy ?? config.strategy.strategy) !== "spot") {
         return { pass: false, reason: "Deploy blocked: the approved canary baseline requires the Spot strategy." };
       }
       if ((args.amount_x ?? 0) !== 0) {
-        return { pass: false, reason: "Deploy blocked: only a single SOL-side deposit is allowed by the canary policy." };
+        return { pass: false, reason: "Deploy blocked: only a single quote-side deposit is allowed by the policy." };
       }
       const minDeploy = 0.01;
       if (amountY < minDeploy) {
         return {
           pass: false,
-          reason: `Amount ${amountY} SOL is below the minimum deploy amount (${minDeploy} SOL). Use at least ${minDeploy} SOL.`,
+          reason: `Amount ${amountY} ${deposit.symbol} is below the minimum deploy amount.`,
         };
       }
-      if (amountY > config.risk.maxDeployAmount) {
+      if (deposit.symbol === 'SOL' && amountY > config.risk.maxDeployAmount) {
         return {
           pass: false,
-          reason: `SOL amount ${amountY} exceeds maximum allowed per position (${config.risk.maxDeployAmount}).`,
+          reason: `${deposit.symbol} amount ${amountY} exceeds maximum allowed per position (${config.risk.maxDeployAmount}).`,
         };
       }
 
@@ -677,7 +681,7 @@ async function runSafetyChecks(name, args) {
       // account when a position uses bin ranges that have never been created before.
       // A typical position spans 1-2 binArrays → buffer = 0.15 SOL to avoid unexpected failures.
       if (balance?.error || !Number.isFinite(balance.sol) || !Number.isFinite(balance.sol_price) || balance.sol_price <= 0) {
-        return { pass: false, reason: "Deploy blocked: SOL balance and USD price could not be verified." };
+        return { pass: false, reason: "Deploy blocked: wallet balance and SOL price could not be verified." };
       }
       const exposureUsd = positions.positions.reduce((sum, p) => {
         const value = p.total_value_true_usd;
@@ -695,18 +699,14 @@ async function runSafetyChecks(name, args) {
         if (!riskStatus.allowed) return { pass: false, reason: `Deploy blocked: ${riskStatus.reason}.` };
       }
       const usdCheck = validateNewPosition({
-        amountSol: amountY,
-        solPrice: balance.sol_price,
+        amountUsd: deposit.amountUsd,
         walletUsd: balance.total_usd,
         currentExposureUsd: riskStatus?.snapshot?.open_exposure_usd ?? exposureUsd,
         risk: config.risk,
       });
       if (!usdCheck.pass) return { pass: false, reason: `Deploy blocked: ${usdCheck.reason}.` };
-      const gasReserve = config.management.gasReserve;
-      const binArrayBuffer = config.management.binArrayRentBuffer ?? 0.15;
-      const minRequired = amountY + gasReserve + binArrayBuffer;
-      if (balance.sol < minRequired) {
-        return { pass: false, reason: `Insufficient SOL: have ${balance.sol.toFixed(3)} SOL, need ${minRequired.toFixed(3)} SOL including deploy and fee/rent reserve.` };
+      if (balance.sol < deposit.requiredSol) {
+        return { pass: false, reason: `Insufficient SOL: have ${balance.sol.toFixed(3)} SOL, need ${deposit.requiredSol.toFixed(3)} SOL for deposit and transaction reserve.` };
       }
       args.initial_value_usd = usdCheck.amountUsd;
 

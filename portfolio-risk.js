@@ -129,13 +129,13 @@ export function checkPortfolioRisk({ balance, positions, expectedWallet, risk, s
   return { allowed: true, snapshot, lpLossUsd, state };
 }
 
-export function validateNewPosition({ amountSol, solPrice, walletUsd, currentExposureUsd = 0, risk }) {
+export function validateNewPosition({ amountSol, solPrice, amountUsd: explicitAmountUsd, walletUsd, currentExposureUsd = 0, risk }) {
   const { maxPositionUsd, maxConcurrentExposureUsd, minimumLiquidReserveUsd } = risk || {};
-  if (!Number.isFinite(amountSol) || amountSol <= 0 || !Number.isFinite(solPrice) || solPrice <= 0 ||
+  const amountUsd = explicitAmountUsd ?? amountSol * solPrice;
+  if (!Number.isFinite(amountUsd) || amountUsd <= 0 ||
       !Number.isFinite(walletUsd) || walletUsd < 0 || !Number.isFinite(currentExposureUsd) || currentExposureUsd < 0) {
     return { pass: false, reason: "USD position sizing data is missing or invalid" };
   }
-  const amountUsd = amountSol * solPrice;
   if (amountUsd > maxPositionUsd + 0.01) return { pass: false, reason: `position size $${amountUsd.toFixed(2)} exceeds the $${maxPositionUsd} per-position limit` };
   if (currentExposureUsd + amountUsd > maxConcurrentExposureUsd + 0.01) {
     return { pass: false, reason: `position would exceed the $${maxConcurrentExposureUsd} concurrent exposure limit` };

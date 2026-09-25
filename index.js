@@ -12,7 +12,8 @@ import { log, logAction } from "./logger.js";
 import { getMyPositions, getActiveBin } from "./tools/dlmm.js";
 import { getWalletBalances } from "./tools/wallet.js";
 import { getTopCandidates, getVolumeTrend } from "./tools/screening.js";
-import { config, reloadScreeningThresholds, computeDeployAmount } from "./config.js";
+import { config, reloadScreeningThresholds } from "./config.js";
+import { chooseDeposit } from "./deposit-policy.js";
 import { evolveThresholds, getCampaignPerformance, getPerformanceSummary } from "./lessons.js";
 import { registerCronRestarter, executeTool } from "./tools/executor.js";
 import { startPolling, stopPolling, sendMessage, sendHTML, notifyOutOfRange, isEnabled as telegramEnabled, createLiveMessage } from "./telegram.js";
@@ -38,8 +39,6 @@ import { evaluateTokenRisk } from "./token-risk-policy.js";
 log("startup", "DLMM LP Agent starting...");
 log("startup", `Mode: ${process.env.DRY_RUN === "true" ? "DRY RUN" : "LIVE"}`);
 log("startup", `Models: management=${config.llm.managementModel}, screening=${config.llm.screeningModel}, general=${config.llm.generalModel}`);
-
-const DEPLOY = config.management.deployAmountSol;
 
 // ═══════════════════════════════════════════
 //  CYCLE TIMERS
@@ -441,12 +440,14 @@ export async function runScreeningCycle({ silent = false } = {}) {
   // Hard guards — don't even run the agent if preconditions aren't met
   let prePositions, preBalance;
   let deployAmount = 0;
+  let deposit = null;
   let liveMessage = null;
   let screenReport = null;
   try {
     [prePositions, preBalance] = await Promise.all([getMyPositions({ force: true }), getWalletBalances()]);
     assertScreeningInputs(prePositions, preBalance);
-    deployAmount = computeDeployAmount(preBalance.sol, preBalance.sol_price);
+    deposit = chooseDeposit(preBalance);
+    deployAmount = deposit?.amount ?? 0;
     const isDryRun = process.env.DRY_RUN === "true";
     if (!isDryRun) {
       const riskStatus = checkPortfolioRisk({
@@ -465,7 +466,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
     if (prePositions.total_positions >= config.risk.maxPositions) {
       log("cron", `Screening skipped — max positions reached (${prePositions.total_positions}/${config.risk.maxPositions})`);
       if (isDryRun) {
-        const observed = await getTopCandidates({ limit: 10, cycleId: shadowCycleId });
+        const observed = await getTopCandidates({ limit: 10, cycleId: shadowCycleId, quote_mint: deposit?.mint });
         logAction({ tool: "screening_decision", args: { cycle_id: shadowCycleId }, result: {
           candidates: observed.candidates.map((pool) => ({ pool_address: pool.pool, score: pool.candidate_score })),
           choices: [], no_deploy: true, jev_status: "skipped_position_limit", luna_model: null,
@@ -479,17 +480,15 @@ export async function runScreeningCycle({ silent = false } = {}) {
       _screeningBusy = false;
       return screenReport;
     }
-    const binArrayBuffer = config.management.binArrayRentBuffer ?? 0.15;
-    const minRequired = Math.max(config.management.minSolToOpen ?? 0, deployAmount + config.management.gasReserve + binArrayBuffer);
-    if (deployAmount < 0.01) {
-      screenReport = `Screening blocked: available SOL/USD budget cannot fund the fixed ${config.management.deployAmountSol} SOL position plus required reserves.`;
+    if (!deposit) {
+      screenReport = 'Screening blocked: need 0.2 SOL or 20 USDC plus SOL transaction reserve.';
       log("portfolio_risk", screenReport);
       _screeningBusy = false;
       return screenReport;
     }
-    if (!isDryRun && preBalance.sol < minRequired) {
-      log("cron", `Screening skipped — insufficient SOL (${preBalance.sol.toFixed(3)} < ${minRequired.toFixed(3)} needed for deploy + gas + binArray rent buffer)`);
-      screenReport = `Screening skipped — insufficient SOL (${preBalance.sol.toFixed(3)} < ${minRequired.toFixed(3)} needed for deploy + gas + binArray rent buffer).`;
+    if (!isDryRun && preBalance.sol < deposit.requiredSol) {
+      log("cron", `Screening skipped — insufficient SOL transaction reserve (${preBalance.sol.toFixed(3)} < ${deposit.requiredSol.toFixed(3)})`);
+      screenReport = `Screening skipped — insufficient SOL transaction reserve (${preBalance.sol.toFixed(3)} < ${deposit.requiredSol.toFixed(3)}).`;
       _screeningBusy = false;
       return screenReport;
     }
@@ -507,7 +506,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
   try {
     // Reuse pre-fetched balance — no extra RPC call needed
     const currentBalance = preBalance;
-    log("cron", `Computed deploy amount: ${deployAmount} SOL (~$${(deployAmount * currentBalance.sol_price).toFixed(2)}; wallet: $${currentBalance.total_usd.toFixed(2)})`);
+    log("cron", `Computed deploy amount: ${deployAmount} ${deposit.symbol} (~$${deposit.amountUsd.toFixed(2)}; wallet: $${currentBalance.total_usd.toFixed(2)})`);
 
     // Load active strategy for display only. EvilPanda runtime policy computes deploy shape.
     const activeStrategy = getActiveStrategy();
@@ -542,7 +541,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
     }
 
     // Discovery failures are failures, not evidence of an empty market.
-    const topCandidates = await getTopCandidates({ limit: 10, cycleId: shadowCycleId });
+    const topCandidates = await getTopCandidates({ limit: 10, cycleId: shadowCycleId, quote_mint: deposit.mint });
     let candidatePools = (topCandidates?.candidates || topCandidates?.pools || []).slice(0, 10);
     let earlyFilteredExamples = topCandidates?.filtered_examples || [];
     let candidateSource = topCandidates?.screening_profile || "strict";
@@ -583,9 +582,9 @@ export async function runScreeningCycle({ silent = false } = {}) {
       }
       return true;
     });
-    let passing = applyPostReconFilters(allCandidates);
+    let passing = applyPostReconFilters(allCandidates).filter(({ pool }) => pool.quote?.mint === deposit.mint);
     passing.sort((a, b) => {
-      const estimate = (item) => estimateNetFeeScenario({ pool: item.pool, amountSol: deployAmount, solPrice: currentBalance.sol_price });
+      const estimate = (item) => estimateNetFeeScenario({ pool: item.pool, amountUsd: deposit.amountUsd, solPrice: currentBalance.sol_price });
       return (estimate(b)?.net_before_inventory_usd ?? -Infinity) - (estimate(a)?.net_before_inventory_usd ?? -Infinity);
     });
 
@@ -609,7 +608,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
         token_age_hours: pool.token_age_hours ?? null,
         top10_holders_pct: ti?.audit?.top_holders_pct ?? null,
         bot_holders_pct: ti?.audit?.bot_holders_pct ?? null,
-        net_scenario: estimateNetFeeScenario({ pool, amountSol: deployAmount, solPrice: currentBalance.sol_price }),
+        net_scenario: estimateNetFeeScenario({ pool, amountUsd: deposit.amountUsd, solPrice: currentBalance.sol_price }),
       })),
     }, success: true });
 
@@ -661,7 +660,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
       const jev = jevByAddress.get(pool.pool);
       const feeRate5m = pool.activity_metrics?.fee_tvl_1h_per_5m_pct ?? activityPerFiveMinutes(pool.fee_active_tvl_ratio, pool.discovery_timeframe);
       const volumeRate5m = pool.activity_metrics?.volume_1h_per_5m_usd ?? activityPerFiveMinutes(pool.volume_window, pool.discovery_timeframe);
-      const netScenario = estimateNetFeeScenario({ pool, amountSol: deployAmount, solPrice: currentBalance.sol_price });
+      const netScenario = estimateNetFeeScenario({ pool, amountUsd: deposit.amountUsd, solPrice: currentBalance.sol_price });
 
       // OKX signals
       const okxParts = [
@@ -696,6 +695,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
 
       const block = [
         `POOL: ${pool.name} (${pool.pool})`,
+        `  quote: ${deposit.symbol} (${deposit.mint})`,
         `  screening_score: ${candidateScore}`,
         jev ? `  jev_advisory_untrusted: fees=${jev.fees.score.toFixed(2)}/2 (${jev.fees.confidence.toFixed(2)} confidence), momentum=${jev.momentum.score.toFixed(2)}/2 (${jev.momentum.confidence.toFixed(2)} confidence), holder_risk=${jev.holder_risk.score.toFixed(2)}/2 (${jev.holder_risk.confidence.toFixed(2)} confidence; higher holder_risk means more concern` : null,
         `  metrics: timeframe=${pool.discovery_timeframe || config.screening.timeframe}, bin_step=${pool.bin_step}, fee_pct=${pool.fee_pct}%, fee_tvl=${pool.fee_active_tvl_ratio}, vol=$${pool.volume_window}, tvl=$${pool.active_tvl}, volatility=${pool.volatility}, mcap=$${pool.mcap}, organic=${pool.organic_score}${pool.token_age_hours != null ? `, age=${pool.token_age_hours}h` : ""}`,
@@ -725,7 +725,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
     const { content } = await agentLoop(`
 SCREENING CYCLE
 ${strategyBlock}
-Positions: ${prePositions.total_positions}/${config.risk.maxPositions} | SOL: ${currentBalance.sol.toFixed(3)} | Deploy: ${deployAmount} SOL (~$${(deployAmount * currentBalance.sol_price).toFixed(2)})
+Positions: ${prePositions.total_positions}/${config.risk.maxPositions} | SOL: ${currentBalance.sol.toFixed(3)} | USDC: ${currentBalance.usdc.toFixed(2)} | Deploy: ${deployAmount} ${deposit.symbol} (~$${deposit.amountUsd.toFixed(2)})
 
 PRE-LOADED CANDIDATES (${passing.length} pools):
 ${candidateBlocks.join("\n\n")}
@@ -737,8 +737,8 @@ STEPS:
    - Prefer pools with vol_trend=up or flat over vol_trend=down.
    - A pool with vol_trend=down and trend_pct < -50% is a red flag (momentum over).
 2. Call deploy_position with the exact recommended_deploy values from the chosen pool:
-   - pool_address: <pool address>
-   - amount_y: ${deployAmount}  ← REQUIRED, always pass this exact value
+   - pool_address: <pool address with ${deposit.symbol} quote>
+   - amount_y: ${deployAmount} ${deposit.symbol} ← REQUIRED, always pass this exact value
    - amount_x: 0
    - strategy: use the candidate's recommended_deploy.strategy exactly
    - bins_below: use the candidate's recommended_deploy.bins_below exactly
@@ -750,7 +750,7 @@ STEPS:
    <pool name>
    <pool address>
 
-   ◎ ${deployAmount} SOL (~$${(deployAmount * currentBalance.sol_price).toFixed(2)}) | <strategy> | bin <active_bin>
+   ◎ ${deployAmount} ${deposit.symbol} (~$${deposit.amountUsd.toFixed(2)}) | <strategy> | bin <active_bin>
    Range: bin <active_bin - bins_below> → <active_bin>
    Downside buffer: <negative %>
 
@@ -817,7 +817,7 @@ IMPORTANT:
           volume_5m_usd: pool.activity_metrics?.volume_1h_per_5m_usd ?? activityPerFiveMinutes(pool.volume_window, pool.discovery_timeframe),
           activity_metrics: pool.activity_metrics ?? null,
           activity_cautions: pool.activity_cautions ?? [],
-          net_scenario: estimateNetFeeScenario({ pool, amountSol: deployAmount, solPrice: currentBalance.sol_price }),
+          net_scenario: estimateNetFeeScenario({ pool, amountUsd: deposit.amountUsd, solPrice: currentBalance.sol_price }),
         })),
         scored_addresses: shadowScores?.map((score) => score.pool_address) ?? [],
         jev_scores: shadowScores ?? [],
@@ -1174,7 +1174,7 @@ async function telegramHandler(msg) {
     const s = config.screening;
     await sendMessage(`Ambang screening:\nUmur token ≥${s.minTokenAgeHours}j, tanpa batas maksimum; Jupiter Score ≥${s.minOrganic}\n` +
       `Volume ≥$${s.minVolume}/${s.timeframe}; fee/active TVL ≥${s.minFeeActiveTvlRatio}%; holder ≥${s.minHolders}; fee token ≥${s.minTokenFeesSol} SOL.\n` +
-      `Posisi maksimal ${config.risk.maxPositions} × ${config.management.deployAmountSol} SOL. /evolve butuh 5 posisi tertutup.`);
+      `Posisi maksimal ${config.risk.maxPositions}: 0,2 SOL atau 20 USDC per LP. /evolve butuh 5 posisi tertutup.`);
     return;
   }
 
@@ -1386,7 +1386,7 @@ if (isDirectRun && isTTY) {
 
   console.log(`
 Commands:
-  1 / 2 / 3 ...  Deploy ${DEPLOY} SOL into that pool
+  1 / 2 / 3 ...  Deploy using the funded quote asset
   auto           Let the agent pick and deploy automatically
   /status        Refresh wallet + positions
   /candidates    Refresh top pool list
@@ -1409,9 +1409,9 @@ Commands:
     if (!isNaN(pick) && pick >= 1 && pick <= startupCandidates.length) {
       await runBusy(async () => {
         const pool = startupCandidates[pick - 1];
-        console.log(`\nDeploying ${DEPLOY} SOL into ${pool.name}...\n`);
+        console.log(`\nDeploying into ${pool.name} with the funded quote asset...\n`);
         const { content: reply } = await agentLoop(
-          `Deploy ${DEPLOY} SOL into pool ${pool.pool} (${pool.name}). Call get_active_bin first then deploy_position. Report result.`,
+          `Deploy into pool ${pool.pool} (${pool.name}) using current wallet policy: 0.2 SOL if funded, otherwise 20 USDC. Call get_active_bin then deploy_position. Report result.`,
           config.llm.maxStepsScreener,
           [],
           "SCREENER",
@@ -1428,7 +1428,7 @@ Commands:
       await runBusy(async () => {
         console.log("\nAgent is picking and deploying...\n");
         const { content: reply } = await agentLoop(
-          `get_top_candidates, pick the best one, get_active_bin, deploy_position with ${DEPLOY} SOL. Execute now, don't ask.`,
+          `get_top_candidates for the funded quote asset, pick the best one, get_active_bin, deploy_position with 0.2 SOL if funded or 20 USDC otherwise. Execute now, don't ask.`,
           config.llm.maxStepsScreener,
           [],
           "SCREENER",
@@ -1605,8 +1605,8 @@ Focus on: hold duration, entry/exit timing, what win rates look like, whether sc
     busy = true;
     try {
       const startupStep3 = process.env.DRY_RUN === "true"
-        ? `3. Ignore wallet SOL threshold in dry run: get_top_candidates then simulate deploy ${DEPLOY} SOL.`
-        : `3. If SOL >= ${config.management.minSolToOpen}: get_top_candidates then deploy ${DEPLOY} SOL.`;
+        ? `3. If funded, get_top_candidates then simulate the current wallet policy deposit.`
+        : `3. If SOL >= ${config.management.minSolToOpen}, use 0.2 SOL; otherwise if USDC >= 20 and SOL transaction reserve is sufficient, use 20 USDC. Get matching candidates then deploy.`;
       await agentLoop(`
 STARTUP CHECK
 1. get_wallet_balance. 2. get_my_positions. ${startupStep3} 4. Report.

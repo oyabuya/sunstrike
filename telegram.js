@@ -371,7 +371,7 @@ export function stopPolling() {
 }
 
 // ─── Notification helpers ────────────────────────────────────────
-export async function notifyDeploy({ pair, amountSol, position, tx, priceRange, binStep, baseFee }) {
+export async function notifyDeploy({ pair, amountSol, amountSymbol = 'SOL', position, tx, priceRange, binStep, baseFee }) {
   if (hasActiveLiveMessage()) return;
   const priceStr = priceRange
     ? `Price range: ${priceRange.min < 0.0001 ? priceRange.min.toExponential(3) : priceRange.min.toFixed(6)} – ${priceRange.max < 0.0001 ? priceRange.max.toExponential(3) : priceRange.max.toFixed(6)}\n`
@@ -381,7 +381,7 @@ export async function notifyDeploy({ pair, amountSol, position, tx, priceRange, 
     : "";
   await sendHTML(
     `✅ <b>Deployed</b> ${pair}\n` +
-    `Amount: ${amountSol} SOL\n` +
+    `Amount: ${amountSol} ${amountSymbol}\n` +
     priceStr +
     poolStr +
     `Position: <code>${position?.slice(0, 8)}...</code>\n` +

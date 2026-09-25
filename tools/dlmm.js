@@ -193,8 +193,8 @@ export async function deployPosition({
   const wallet = getWallet();
   const pool = await getPool(pool_address);
   const baseMint = pool.lbPair.tokenXMint.toString();
-  if (pool.lbPair.tokenYMint.toString() !== config.tokens.SOL) {
-    return { success: false, error: "Deploy blocked: on-chain quote token is not the approved SOL mint." };
+  if (![config.tokens.SOL, config.tokens.USDC].includes(pool.lbPair.tokenYMint.toString())) {
+    return { success: false, error: "Deploy blocked: on-chain quote token is neither SOL nor USDC." };
   }
   if (isBaseMintOnCooldown(baseMint)) {
     log("deploy", `Base mint ${baseMint.slice(0, 8)} is on cooldown — skipping deploy for pool ${pool_address.slice(0, 8)}`);
@@ -240,7 +240,10 @@ export async function deployPosition({
 
   // Fetch actual decimals for both tokens — never assume 9 (USDC=6, SOL=9, etc.)
   const quoteMintInfo = await getConnection().getParsedAccountInfo(new PublicKey(pool.lbPair.tokenYMint));
-  const quoteDecimals = quoteMintInfo.value?.data?.parsed?.info?.decimals ?? 9;
+  const quoteDecimals = quoteMintInfo.value?.data?.parsed?.info?.decimals;
+  if (quoteDecimals !== (pool.lbPair.tokenYMint.toString() === config.tokens.USDC ? 6 : 9)) {
+    return { success: false, error: "Deploy blocked: quote mint decimals could not be verified." };
+  }
   const totalYLamports = new BN(Math.floor(finalAmountY * Math.pow(10, quoteDecimals)));
 
   let totalXLamports = new BN(0);
@@ -353,7 +356,9 @@ export async function deployPosition({
       fee_tvl_ratio,
       volume_window_at_deploy: volume_window,
       organic_score,
-      amount_sol: finalAmountY,
+      amount_sol: pool.lbPair.tokenYMint.toString() === config.tokens.SOL ? finalAmountY : 0,
+      quote_mint: pool.lbPair.tokenYMint.toString(),
+      amount_quote: finalAmountY,
       amount_x: finalAmountX,
       active_bin: activeBin.binId,
       initial_value_usd,
@@ -382,6 +387,7 @@ export async function deployPosition({
       wide_range: isWideRange,
       amount_x: finalAmountX,
       amount_y: finalAmountY,
+      quote_mint: pool.lbPair.tokenYMint.toString(),
       txs: txHashes,
     };
   } catch (error) {
