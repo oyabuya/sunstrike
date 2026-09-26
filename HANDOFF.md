@@ -1,5 +1,12 @@
 # Sunstrike — handoff
 
+## Audit konfigurasi Meridian — 26 September 2026
+
+- Perbandingan sumber Meridian upstream, perilaku Sunstrike, dan briefing pagi dicatat di `reports/MERIDIAN_CONFIG_COMPARISON_2026-09-26.md`.
+- Perbedaan berpengaruh terbesar: ukuran/jumlah posisi, bentuk range dan strategi, serta aturan exit. Briefing tidak membuktikan pemakai memakai default; beberapa `PREFER`-nya berada di luar batas default Meridian saat ini.
+- `user-config.json` lokal yang diabaikan Git terakhir diubah 24 September dan runtime lokal berbeda dari nilai yang dicatat di handoff 25 September (`maxTvl`, holder minimum, token-fee minimum, interval screening). Query SSH read-only ke VPS ditolak sandbox, jadi konfigurasi VPS belum dikonfirmasi. Jangan samakan config lokal dengan VPS atau ubah aturan risiko pemilik dari briefing tersebut.
+- Tidak ada config runtime, wallet, service, atau transaksi yang diubah dalam audit ini. Sebelum menyusun eksperimen parity, rekonsiliasi config VPS dan kumpulkan ledger per posisi dengan inventory PnL, fees, durasi, close reason, swap, rent, dan biaya transaksi.
+
 ## Penolakan deploy USDC pada screening — 25 September 2026
 
 - Tiga siklus VPS 15:33, 15:48, dan 16:03 UTC memilih 20 USDC tetapi preflight membalas `approved position size is 20 USDC`; tidak ada transaksi. Konfigurasi runtime tetap `deployAmountSol=0.2`, `maxPositions=2`, `strategy=spot`. Cabang ukuran lama juga menolak field `amount_sol` bila hadir pada permintaan USDC walaupun `amount_y=20` valid; argumen mentah model tidak direkam untuk ketiga blokir, jadi penyebab field ini disimpulkan dari cabang kode, bukan dibuktikan langsung oleh log.
